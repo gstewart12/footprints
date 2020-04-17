@@ -157,13 +157,13 @@ kormann_model <- function(x, y, ws, ustar, mo_length, v_sigma, z, zd, zo,
   zmol <- zm / ol
   
   # Dimensionless gradient functions of wind and temp profiles (Dyer 1974)
-  if (l > 0) {
+  if (ol > 0) {
     phi <- 1 + 5 * zmol
     phim <- 1 + 5 * zmol
     phic <- 1 + 5 * zmol
     m <- (1 + 5 * (zmol)) / (log(zm / zo) + 5 * zmol)
     n <- 1 / (1 + 5 * zmol)
-  } else if (l < 0) {
+  } else if (ol < 0) {
     zeta <- (1 - 16 * (zmol))^(-1 / 4)
     phi <- 1 / (zeta^2)
     phim <- (1 - 16 * (zmol))^(-1 / 4)
