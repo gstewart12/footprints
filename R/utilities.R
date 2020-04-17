@@ -8,10 +8,8 @@
 #' @param res An integer, width of grid cells to be used in calculating
 #'   footprint probabilities. Defaults to one (i.e. a 1-m resolution).
 #'
-#' @return
 #' @export
 #'
-#' @examples
 fp_grid <- function(extent, fetch, res = 1) {
   
   dx <- res
@@ -48,17 +46,60 @@ fp_grid <- function(extent, fetch, res = 1) {
 }
 
 
-#' Title
+aoi_to_grid <- function(aoi, grid, coords) {
+  
+  # Add geographical coordinates to grid
+  grid$y <- grid$y + coords[1] # lat
+  grid$x <- grid$x + coords[2] # lon
+  
+  # Convert list of matrices to XYZ data frame
+  temp_df <- data.frame(
+    # Necessary order: lat (y), lon (x), values
+    y = as.vector(grid$y),
+    x = as.vector(grid$x)
+  )
+  temp_df$z <- 1L
+  
+  # Get CRS from AOI
+  aoi_crs <- raster::crs(aoi)
+  
+  # Rasterize
+  temp_rst <- raster::rasterFromXYZ(as.matrix(temp_df), crs = aoi_crs)
+  
+  # Mask AOI
+  aoi_mask <- raster::mask(temp_rst, aoi, updatevalue = 0L)
+  
+  # Return matrix
+  as.matrix(aoi_mask)
+}
+
+
+get_trim_extent <- function(x) {
+  
+  keep_x <- which(colSums(x) != 0)
+  keep_y <- which(rowSums(x) != 0)
+  
+  # xmin, xmax, ymin, ymax
+  c(min(keep_x), max(keep_x), min(keep_y), max(keep_y))
+}
+
+
+trim_matrix <- function(x, extent) {
+  
+  x[extent[1]:extent[2], extent[3]:extent[4]]
+}
+
+
+#' Rasterize a footprint matrix
 #'
-#' @param x
-#' @param grid
-#' @param coords
-#' @param crs
+#' @param x A footprint object
+#' @param grid A list of length two containing matrices of equal dimensions,
+#'   indicating x and y coordinates. Template returned by \link{fp_grid}.
+#' @param coords A numeric vector of length two
+#' @param crs A character or object of class CRS.
 #'
-#' @return
 #' @export
 #'
-#' @examples
 fp_rasterize <- function(x, grid, coords, crs) {
   
   # Add geographical coordinates to grid
@@ -74,7 +115,6 @@ fp_rasterize <- function(x, grid, coords, crs) {
   ))
   
   # Rasterize
-  #raster::rasterize()
   raster::rasterFromXYZ(fp_grid, crs = crs)
   
 }
@@ -82,8 +122,7 @@ fp_rasterize <- function(x, grid, coords, crs) {
 
 fp_polygonize <- function(x) {
   class <- class(x)
-  #browser()
-  if (fp_is_empty(x)) return(NA)
+  #if (fp_is_empty(x)) return(NA)
   if (class == "RasterLayer") {
     # Method for RasterLayer class footprint
     # Set all raster values to 0 - they don't matter anymore
