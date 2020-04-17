@@ -1,4 +1,31 @@
 
+calc_fp_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, z, zd, zo) {
+  
+  # Get grid dimensions
+  n <- dim(grid$x)[1]
+  
+  # Check required variables/conditions
+  
+  # Exit gracefully for invalid cases (return empty matrix)
+  if (anyNA(c(wd, ustar, mo_length, v_sigma, blh))) {
+    return(matrix(NA, nrow = n, ncol = n))
+  } 
+  
+  # Rotate grid toward wind direction
+  grid_rot <- rotate_grid(grid, wd)
+  
+  # Initialize output grid
+  phi <- matrix(0, nrow = n, ncol = n)
+  
+  # Subset downwind area of grid for calculating contributions
+  phi[grid_rot$x > 0] <- kljun_model(
+    grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, blh, z, zd, zo, n
+  )
+  
+  phi
+}
+
+
 ## =============================================================================
 #' Calculate two-dimensional footprints
 #'
@@ -6,9 +33,11 @@
 #'
 #' @param wd A numeric vector, wind direction in degrees from North.
 #' @param ustar A numeric vector, friction velocity in ms+1s-1.
-#' @param L A numeric vector, Monin-Obukhov length in m.
-#' @param v_sd A numeric vector, standard deviation of the crosswind component.
+#' @param mo_length A numeric vector, Monin-Obukhov length in m.
+#' @param v_sigma A numeric vector, standard deviation of the crosswind 
+#'   component.
 #' @param ws A numeric vector, wind speed in ms+1s-1.
+#' @param blh A numeric value, boundary layer height in m.
 #' @param z A numeric value, tower height in m.
 #' @param zd A numeric value, zero-plane displacement height in m.
 #' @param zo The aerodynamic roughness length in m.
@@ -20,12 +49,10 @@
 #'
 #' @details Support only for square grids at the moment.
 #'
-#' @return
 #' @export
 #'
-#' @examples
-fp_calculate <- function(wd, ustar, mo_length, v_sigma, ws, blh, z, zd, zo,
-                         grid, model = c("H00", "K15", "KM01")) {
+calc_fp <- function(grid, wd, ustar, mo_length, v_sigma, z, zd, zo, ws = NULL, 
+                    blh = NULL, model = c("H00", "K15", "KM01")) {
   
   model <- match.arg(model)
   
@@ -33,7 +60,7 @@ fp_calculate <- function(wd, ustar, mo_length, v_sigma, ws, blh, z, zd, zo,
   n <- dim(grid$x)[1]
   
   # Check for equal dimensions
-  if (n != dim(grid$x)[2]) stop("Only square grids supported.", call. = FALSE)
+  #if (n != dim(grid$x)[2]) stop("Only square grids supported.", call. = FALSE)
   
   # Check required variables/conditions
   vars <- c(wd, ustar, mo_length, v_sigma)
@@ -50,39 +77,32 @@ fp_calculate <- function(wd, ustar, mo_length, v_sigma, ws, blh, z, zd, zo,
   }
   
   # Exit gracefully for invalid cases (return empty matrix)
-  if (anyNA(vars) | invalid) {
-    phi <- matrix(NA, nrow = n, ncol = n)
-    return(phi)
-  }
+  if (anyNA(vars) | invalid) return(matrix(NA, nrow = n, ncol = n))
   
   # Set initial output grid
   phi <- matrix(0, nrow = n, ncol = n)
   
-  # Calculate wind direction angle
-  theta <- ((360 - wd) %% 360) * (pi / 180)
-  
-  # Rotate coordinates toward wind direction
-  x_rot <- grid$x * cos(theta) - grid$y * sin(theta)
-  y_rot <- grid$x * sin(theta) + grid$y * cos(theta)
+  # Rotate grid toward wind direction
+  grid_rot <- rotate_grid(grid, wd)
   
   # Subset downwind area of grid for calculating contributions
-  dw <- x_rot > 0
+  dw <- grid_rot$x > 0
   
   # Execute chosen model
   if (model == "KM01") {
     # Kormann model
     phi[dw] <- kormann_model(
-      x_rot, y_rot, ws, ustar, mo_length, v_sigma, z, zd, zo, n
+      grid_rot$x, grid_rot$y, ws, ustar, mo_length, v_sigma, z, zd, zo, n
     )
   } else if (model == "H00") {
     # Hsieh model
     phi[dw] <- hsieh_model(
-      x_rot, y_rot, ustar, mo_length, v_sigma, z, zd, zo, n
+      grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, z, zd, zo, n
     )
   } else if (model == "K15") {
-    # Hsieh model
+    # Kljun model
     phi[dw] <- kljun_model(
-      x_rot, y_rot, ustar, mo_length, v_sigma, blh, z, zd, zo, n
+      grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, blh, z, zd, zo, n
     )
   }
   
@@ -91,5 +111,20 @@ fp_calculate <- function(wd, ustar, mo_length, v_sigma, ws, blh, z, zd, zo,
   
   # Output matrix holding footprint probabilities
   phi
-  
 }
+
+
+rotate_grid <- function(grid, dir) {
+  
+  # Calculate wind direction angle
+  theta <- ((360 - dir) %% 360) * (pi / 180)
+  
+  out <- grid
+  
+  # Rotate coordinates toward wind direction
+  out$x <- grid$x * cos(theta) - grid$y * sin(theta)
+  out$y <- grid$x * sin(theta) + grid$y * cos(theta)
+  
+  out
+}
+
