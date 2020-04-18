@@ -10,7 +10,7 @@
 #'
 #' @export
 #'
-fp_grid <- function(extent, fetch, res = 1) {
+grid_init <- function(extent, fetch, res = 1) {
   
   dx <- res
   dy <- res
@@ -70,23 +70,58 @@ aoi_to_grid <- function(aoi, grid, coords) {
   aoi_mask <- raster::mask(temp_rst, aoi, updatevalue = 0L)
   
   # Return matrix
-  as.matrix(aoi_mask)
+  raster::as.matrix(aoi_mask)
 }
 
 
-get_trim_extent <- function(x) {
+get_trim_extent <- function(x, values = 0) {
   
-  keep_x <- which(colSums(x) != 0)
-  keep_y <- which(rowSums(x) != 0)
+  # Only support for one trim value at the moment
+  keep_y <- which(rowSums(x) != values)
+  keep_x <- which(colSums(x) != values)
   
-  # xmin, xmax, ymin, ymax
-  c(min(keep_x), max(keep_x), min(keep_y), max(keep_y))
+  # ymin, ymax, xmin, xmax
+  c(min(keep_y), max(keep_y), min(keep_x), max(keep_x))
 }
 
 
-trim_matrix <- function(x, extent) {
+trim_matrix <- function(x, extent = get_trim_extent(x)) {
   
   x[extent[1]:extent[2], extent[3]:extent[4]]
+}
+
+
+plot_matrix <- function(x) {
+  
+  raster::plot(raster::raster(x))
+}
+
+
+write_matrix <- function(x, file, trunc = 9) {
+  
+  # Convert data type to integer for more efficient storage
+  # - this means weights below (1 / 'trunc') are effectively zero
+  if (!is.na(trunc)) {
+    x <- trunc(x * 10^trunc)
+    storage.mode(x) <- "integer"
+  }
+  
+  # Write to file
+  write.table(x, paste0(file, ".txt"), row.names = FALSE, col.names = FALSE)
+}
+
+
+read_matrix <- function(file, trunc = 9) {
+  
+  data <- read.table(file, sep = " ")
+  data_mat <- as.matrix(data)
+  dimnames(data_mat) <- NULL
+  
+  if (!is.na(trunc)) {
+    data_mat <- data_mat / 10^trunc
+  }
+  
+  data_mat
 }
 
 
@@ -117,6 +152,21 @@ fp_rasterize <- function(x, grid, coords, crs) {
   # Rasterize
   raster::rasterFromXYZ(fp_grid, crs = crs)
   
+}
+
+
+rotate_grid <- function(grid, dir) {
+  
+  # Calculate wind direction angle
+  theta <- ((360 - dir) %% 360) * (pi / 180)
+  
+  out <- grid
+  
+  # Rotate coordinates toward wind direction
+  out$x <- grid$x * cos(theta) - grid$y * sin(theta)
+  out$y <- grid$x * sin(theta) + grid$y * cos(theta)
+  
+  out
 }
 
 
