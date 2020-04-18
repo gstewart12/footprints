@@ -2,25 +2,32 @@
 calc_fp_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, z, zd, zo) {
   
   # Get grid dimensions
-  n <- dim(grid$x)[1]
+  dims <- dim(grid$x)
   
   # Check required variables/conditions
   
   # Exit gracefully for invalid cases (return empty matrix)
   if (anyNA(c(wd, ustar, mo_length, v_sigma, blh))) {
-    return(matrix(NA, nrow = n, ncol = n))
+    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
   } 
   
   # Rotate grid toward wind direction
   grid_rot <- rotate_grid(grid, wd)
   
   # Initialize output grid
-  phi <- matrix(0, nrow = n, ncol = n)
+  phi <- matrix(0, nrow = dims[1], ncol = dims[2])
   
   # Subset downwind area of grid for calculating contributions
-  phi[grid_rot$x > 0] <- kljun_model(
-    grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, blh, z, zd, zo, n
+  footprint <- kljun_model(
+    grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, blh, z, zd, zo, dims
   )
+  
+  # Check model results, return empty matrix if unexpected
+  if (length(ffp_temp) != prod(dims)) {
+    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
+  } 
+  
+  phi[grid_rot$x > 0] <- footprint
   
   phi
 }
@@ -77,7 +84,9 @@ calc_fp <- function(grid, wd, ustar, mo_length, v_sigma, z, zd, zo, ws = NULL,
   }
   
   # Exit gracefully for invalid cases (return empty matrix)
-  if (anyNA(vars) | invalid) return(matrix(NA, nrow = n, ncol = n))
+  if (anyNA(vars) | invalid) {
+    return(matrix(NA, nrow = nrow(grid$x), ncol = ncol(grid$x)))
+  } 
   
   # Set initial output grid
   phi <- matrix(0, nrow = n, ncol = n)
@@ -113,18 +122,4 @@ calc_fp <- function(grid, wd, ustar, mo_length, v_sigma, z, zd, zo, ws = NULL,
   phi
 }
 
-
-rotate_grid <- function(grid, dir) {
-  
-  # Calculate wind direction angle
-  theta <- ((360 - dir) %% 360) * (pi / 180)
-  
-  out <- grid
-  
-  # Rotate coordinates toward wind direction
-  out$x <- grid$x * cos(theta) - grid$y * sin(theta)
-  out$y <- grid$x * sin(theta) + grid$y * cos(theta)
-  
-  out
-}
 
