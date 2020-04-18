@@ -11,12 +11,12 @@ kljun_model <- function(x, y, ustar, mo_length, v_sigma, blh, z, zd, zo, dims) {
   h <- blh
   
   # Construct helper matrices
-  xstar <- matrix(0, nrow = dims, ncol = dims)
-  fstar <- matrix(0, nrow = dims, ncol = dims)
-  sigystar <- matrix(0, nrow = dims, ncol = dims)
-  f <- matrix(0, nrow = dims, ncol = dims)
-  sigy <- matrix(0, nrow = dims, ncol = dims)
-  dy <- matrix(0, nrow = dims, ncol = dims)
+  xstar <- matrix(0, nrow = dims[1], ncol = dims[2])
+  fstar <- matrix(0, nrow = dims[1], ncol = dims[2])
+  sigystar <- matrix(0, nrow = dims[1], ncol = dims[2])
+  f <- matrix(0, nrow = dims[1], ncol = dims[2])
+  sigy <- matrix(0, nrow = dims[1], ncol = dims[2])
+  dy <- matrix(0, nrow = dims[1], ncol = dims[2])
   
   # Set model constants
   
