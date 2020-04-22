@@ -1,5 +1,6 @@
 
-calc_fp_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, z, zd, zo) {
+calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, 
+                                 z, zd, zo) {
   
   # Get grid dimensions
   dims <- dim(grid$x)
@@ -23,7 +24,7 @@ calc_fp_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, z, zd, zo) {
   )
   
   # Check model results, return empty matrix if unexpected
-  if (length(ffp_temp) != prod(dims)) {
+  if (length(footprint) != prod(dims)) {
     return(matrix(NA, nrow = dims[1], ncol = dims[2]))
   } 
   
@@ -49,7 +50,7 @@ calc_fp_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, z, zd, zo) {
 #' @param zd A numeric value, zero-plane displacement height in m.
 #' @param zo The aerodynamic roughness length in m.
 #' @param grid A list of length two containing matrices of equal dimensions,
-#'   indicating x and y coordinates. Template returned by \link{fp_grid}.
+#'   indicating x and y coordinates. Template returned by \link{grid_init}.
 #' @param model A character string naming the model to be used in footprint
 #'   calculations. Can be "KM01" for the Kormann & Meixner (2001) model or "H00"
 #'   for the Hsieh et al. (2000) model.
@@ -58,8 +59,9 @@ calc_fp_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, z, zd, zo) {
 #'
 #' @export
 #'
-calc_fp <- function(grid, wd, ustar, mo_length, v_sigma, z, zd, zo, ws = NULL, 
-                    blh = NULL, model = c("H00", "K15", "KM01")) {
+calc_footprint <- function(grid, wd, ustar, mo_length, v_sigma, z, zd, zo, 
+                           ws = NULL, blh = NULL, 
+                           model = c("H00", "K15", "KM01")) {
   
   model <- match.arg(model)
   
@@ -123,3 +125,97 @@ calc_fp <- function(grid, wd, ustar, mo_length, v_sigma, z, zd, zo, ws = NULL,
 }
 
 
+#' Time-averaged footprint
+#'
+#' @param x A list of footprint matrices.
+#' @param grid A list of length two containing matrices of equal dimensions,
+#'   indicating x and y coordinates. Template returned by \link{grid_init}.
+#' @param weights A vector of same length as x
+#'
+#' @export
+calc_climatology <- function(x, grid, weights = NULL) {
+  
+  # Get grid dimensions
+  n <- dim(grid$x)[1]
+  len <- length(x)
+  
+  if (!is.null(weights)) {
+    avg_ftp <- list(
+      z = matrix(0, nrow = n, ncol = n),
+      fpw = matrix(0, nrow = n, ncol = n)
+    )
+  } else avg_ftp <- list(z = matrix(0, nrow = n, ncol = n))
+  
+  count <- 0
+  #pbar <- dplyr::progress_estimated(len)
+  
+  for (i in 1:len) {
+    
+    fp <- x[[i]]
+    
+    if (any(!is.na(fp$z))) {
+      if (!is.null(weights)) {
+        # If using weights, only include record if both fp and weight exist
+        if (!is.na(weights[i])) {
+          avg_ftp$z <- avg_ftp$z + fp$z
+          avg_ftp$fpw <- avg_ftp$fpw + fp$z * weights[i]
+          count <- count + 1
+        }
+      } else if (is.null(weights)) {
+        # Only need fp if not using weights
+        avg_ftp$z <- avg_ftp$z + fp$z
+        count <- count + 1
+      }
+    }
+    
+    #pbar$tick()$print()
+  }
+  
+  avg_ftp$z <- avg_ftp$z / count
+  
+  if (!is.null(weights)) {
+    # Similar weighting routine to Budishchev et al. (2014)
+    wsum <- sum(avg_ftp$fpw, na.rm = TRUE) # equals sum of weights
+    avg_ftp$z <- avg_ftp$fpw / wsum
+    #avg_ftp$fpw <- avg_ftp$fpw / count # this preserves the weights units
+  }
+  
+  avg_ftp$z
+}
+
+
+summarize_cover <- function(x, y, type = c("factor", "numeric"), levels) {
+  
+  type <- rlang::arg_match(type)
+  
+  if (type == "numeric") {
+    
+    # Convolve matrices, normalize by total footprint weight
+    out <- sum(x * y) / sum(x)
+    
+    return(out)
+  }
+  
+  # Detect levels if necessary
+  if (missing(levels)) {
+    levels <- sort(unique(as.vector(y)))
+    if (length(levels) > length(x) / 2) {
+      stop("Too many levels detected. Is type = 'numeric' more appropriate?")
+    }
+  } 
+  
+  # Add names if not given
+  if (!rlang::is_named(levels)) levels <- rlang::set_names(levels)
+  
+  n <- length(levels)
+  out <- rlang::set_names(rep(NA, n), names(levels))
+  
+  # Add up weights for each cover type
+  for (i in 1:n) {
+    cells <- which(y == levels[i])
+    out[i] <- sum(x[cells])
+  }
+  
+  # Return named vector equal in length to number of level
+  out
+}
