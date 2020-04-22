@@ -1,5 +1,5 @@
 
-## =============================================================================
+
 #' Construct matrix template for calculating footprint
 #'
 #' @param extent A numeric vector of length four
@@ -43,6 +43,32 @@ grid_init <- function(extent, fetch, res = 1) {
   out <- list(x = x_2d, y = y_2d)
   attributes(out) <- list("names" = names(out), "fetch" = fetch, "res" = res)
   out
+}
+
+
+grid_template_rst <- function(grid, coords) {
+  
+  # lon range, lat range (not positive about the order)
+  grid_range <- c(range(grid$x + coords[2]), range(grid$y + coords[1]))
+  extent <- raster::extent(grid_range)
+  
+  # Return raster template
+  raster::raster(extent, nrows = nrow(grid$x), ncols = ncol(grid$x))
+}
+
+
+snap_to_grid <- function(x, grid, coords, resample_method = "ngb") {
+  
+  template <- grid_template_rst(grid, coords)
+  
+  # Assign CRS from original object
+  raster::crs(template) <- raster::crs(x)
+  
+  # Resample according to grid parameters
+  resampled <- raster::resample(x, template, method = resample_method)
+  
+  # Return matrix object fit to grid
+  raster::as.matrix(resampled)
 }
 
 
@@ -97,6 +123,7 @@ plot_matrix <- function(x) {
 }
 
 
+#' @importFrom utils "write.table"
 write_matrix <- function(x, file, trunc = 9) {
   
   # Convert data type to integer for more efficient storage
@@ -111,6 +138,7 @@ write_matrix <- function(x, file, trunc = 9) {
 }
 
 
+#' @importFrom utils "read.table"
 read_matrix <- function(file, trunc = 9) {
   
   data <- read.table(file, sep = " ")
@@ -125,16 +153,35 @@ read_matrix <- function(file, trunc = 9) {
 }
 
 
+#' Read grid coordinates from two .txt files
+#' 
+#' @param path A character vector containing a single path
+#' @param names A character vector of length two, the file names of grid 
+#'   elements (omitting the extension)
+#' 
+#' @importFrom magrittr "%>%"
+#' 
+#' @export
+read_grid <- function(path, names = c("x", "y")) {
+  
+  file_names <- paste0(names, ".txt")
+  grid_files <- file.path(path, file_names)
+  
+  grid_files %>% 
+    purrr::map(read_matrix, trunc = NA) %>%
+    rlang::set_names(names)
+}
+
+
 #' Rasterize a footprint matrix
 #'
 #' @param x A footprint object
 #' @param grid A list of length two containing matrices of equal dimensions,
-#'   indicating x and y coordinates. Template returned by \link{fp_grid}.
+#'   indicating x and y coordinates. Template returned by \link{grid_init}.
 #' @param coords A numeric vector of length two
 #' @param crs A character or object of class CRS.
 #'
 #' @export
-#'
 fp_rasterize <- function(x, grid, coords, crs) {
   
   # Add geographical coordinates to grid
@@ -170,9 +217,62 @@ rotate_grid <- function(grid, dir) {
 }
 
 
-fp_polygonize <- function(x) {
+#' Mask footprint to its analytical source area
+#'
+#' As the analytical footprint approaches 100%, the coverage increases rapidly
+#' over area that contributes little to the total measured flux (Matthes et al.,
+#' 2014). Thus, it may be desirable to consider a percantage of the calculated
+#' footprint as the analytical footprint. This is acheived by masking the
+#' footprint to a given maximum cumulative weight.
+#'
+#' @param x The footprint as a numeric matrix or RasterLayer. 
+#' @param p A numeric value between 0 and 1, recommended by Kljun et al. (2015)
+#'   to be less than 0.9. Defaults to 0.85.
+#' @param mask_value A value to assign cells beyond the maximum percent weight.
+#'   Defaults to NA, but 0 may be useful in some situations.
+#'
+#' @return An object of the same class as x, either a numeric matrix or 
+#'   RasterLayer.
+#' 
+#' @export
+mask_source_area <- function(x, p = 0.85, mask_value = NA) {
+  
+  # Check inputs
+  
+  # Assume that p is given as a percentage if >1
+  if (p > 1) p <- p / 100
+  
+  # Sort matrix values from high to low
+  rs <- sort(as.vector(x), decreasing = TRUE)
+  
+  # Calculate cumulative sums of footprint weights
+  cs <- cumsum(rs)
+  
+  # Get the minimum value of cumulative sum less than p
+  rp <- min(rs[cs < p])
+  out <- x
+  
+  # Set all other cells to fill value
+  out[out < rp] <- mask_value
+  
+  out
+  
+}
+
+
+#' Convert footprint to a polygon representing a given source area
+#'
+#' @param x The footprint as a numeric matrix or RasterLayer. 
+#' @param p A numeric value between 0 and 1, recommended by Kljun et al. (2015)
+#'   to be less than 0.9. Defaults to 0.85.
+#'
+#' @export
+source_area_polygon <- function(x, p = 0.85) {
+  
+  masked <- mask_source_area(x, p = p, mask_value = NA)
+  
   class <- class(x)
-  #if (fp_is_empty(x)) return(NA)
+  
   if (class == "RasterLayer") {
     # Method for RasterLayer class footprint
     # Set all raster values to 0 - they don't matter anymore
