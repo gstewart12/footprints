@@ -190,15 +190,16 @@ summarize_cover <- function(x, y, type = c("factor", "numeric"), levels) {
   
   if (type == "numeric") {
     
-    # Convolve matrices, normalize by total footprint weight
-    out <- sum(x * y) / sum(x)
+    # Normalize footprint by total weight, convolve matrices
+    out <- (x / sum(x)) * y
+    #out <- sum(x * y) / sum(x)
     
     return(out)
   }
   
   # Detect levels if necessary
   if (missing(levels)) {
-    levels <- sort(unique(as.vector(y)))
+    levels <- sort(na.omit(unique(as.vector(y))))
     if (length(levels) > length(x) / 2) {
       stop("Too many levels detected. Is type = 'numeric' more appropriate?")
     }
@@ -213,7 +214,7 @@ summarize_cover <- function(x, y, type = c("factor", "numeric"), levels) {
   # Add up weights for each cover type
   for (i in 1:n) {
     cells <- which(y == levels[i])
-    out[i] <- sum(x[cells])
+    if (length(cells) == 0) out[i] <- 0 else out[i] <- sum(x[cells])
   }
   
   # Return named vector equal in length to number of level
