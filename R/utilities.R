@@ -67,8 +67,13 @@ snap_to_grid <- function(x, grid, coords, resample_method = "ngb") {
   # Resample according to grid parameters
   resampled <- raster::resample(x, template, method = resample_method)
   
+  out <- raster::as.matrix(resampled)
+  
+  # Mask AOI if exists in grid list
+  if (aoi %in% names(grid)) out <- out * grid$aoi
+  
   # Return matrix object fit to grid
-  raster::as.matrix(resampled)
+  out
 }
 
 
