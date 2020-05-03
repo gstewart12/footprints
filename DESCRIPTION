@@ -22,4 +22,8 @@ Imports:
     broom,
     purrr,
     rlang,
-    magrittr
+    magrittr,
+    tidyr,
+    ggplot2,
+    readr,
+    tibble
