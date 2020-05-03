@@ -6,8 +6,6 @@ kljun_model <- function(x, y, ustar, mo_length, v_sigma, blh, z, zd, zo, dims) {
   
   # Input variables
   ol <- mo_length
-  sigmav <- v_sigma
-  ustar <- ustar
   h <- blh
   
   # Construct helper matrices
@@ -72,7 +70,7 @@ kljun_model <- function(x, y, ustar, mo_length, v_sigma, blh, z, zd, zo, dims) {
   ps1 <- 1e-5 * abs(zm / ol)^(-1) + p
   if (ps1 > 1) ps1 <- 1
   
-  sigy[dw] <- sigystar[dw] / ps1 * zm * sigmav / ustar
+  sigy[dw] <- sigystar[dw] / ps1 * zm * v_sigma / ustar
   
   # 6. Crosswind dispersion (Eq. 10)
   dy[dw] <- 1 / (sqrt(2 * pi) * sigy[dw]) * exp(-y[dw]^2 / (2 * sigy[dw]^2))
@@ -87,11 +85,6 @@ hsieh_model <- function(x, y, ustar, mo_length, v_sigma, z, zd, zo, dims) {
   
   ## HSIEH MODEL - via Hsieh et al. (2000)
   
-  # Input variables
-  ol <- mo_length
-  sigmav <- v_sigma
-  ustar <- ustar
-  
   # Construct helper matrices
   f <- matrix(0, nrow = dims, ncol = dims)
   sig <- matrix(0, nrow = dims, ncol = dims)
@@ -103,7 +96,7 @@ hsieh_model <- function(x, y, ustar, mo_length, v_sigma, z, zd, zo, dims) {
   
   # Define and calculate footprint parameters
   zu <- zm * (log(zm / zo) - 1 + (zo / zm))
-  zl <- zu / ol
+  zl <- zu / mo_length
   if (abs(zl) < 0.04) {
     d <- 0.97
     p <- 1
@@ -114,7 +107,7 @@ hsieh_model <- function(x, y, ustar, mo_length, v_sigma, z, zd, zo, dims) {
     d <- 2.44
     p <- 1.33
   }
-  dp <- d * zu^p * abs(ol)^(1 - p)
+  dp <- d * zu^p * abs(mo_length)^(1 - p)
   
   # Subset downwind area of grid for calculating contributions
   dw <- x > 0
@@ -125,7 +118,7 @@ hsieh_model <- function(x, y, ustar, mo_length, v_sigma, z, zd, zo, dims) {
   # Define and calculate 2D extension parameters
   a1 <- 0.3
   p1 <- 0.86
-  sig[dw] <- a1 * zo * (sigmav / ustar) * (x[dw] / zo) ^ p1
+  sig[dw] <- a1 * zo * (v_sigma / ustar) * (x[dw] / zo) ^ p1
   dy[dw] <- 1 / (sqrt(2 * pi) * sig[dw]) * exp(-0.5 * (y[dw] / sig[dw]) ^ 2)
   
   # Return 2D footprint adjusted by lateral diffusion
@@ -135,75 +128,237 @@ hsieh_model <- function(x, y, ustar, mo_length, v_sigma, z, zd, zo, dims) {
 
 
 ## =============================================================================
-kormann_model <- function(x, y, ws, ustar, mo_length, v_sigma, z, zd, zo,
-                          dims) {
+kormann_model <- function(x, y, ws, ustar, mo_length, v_sigma, zm, zd, dims) {
   
-  ## KORMANN MODEL - via Forbrich et al. (2011)
-  
-  # Input variables
-  ol <- mo_length
-  sigmav <- v_sigma
-  ustar <- ustar
+  ## KORMANN MODEL - via Kormann & Meixner (2001)
   
   # Construct helper matrices
-  h0 <- matrix(0, nrow = dims, ncol = dims)
-  h1 <- matrix(0, nrow = dims, ncol = dims)
-  h2 <- matrix(0, nrow = dims, ncol = dims)
-  h3 <- matrix(0, nrow = dims, ncol = dims)
-  
-  # Set model constants
-  zm <- z - zd  # aerodynamic measurement height
-  k <- 0.4  # Von Karman constant
-  zmol <- zm / ol
-  
-  # Dimensionless gradient functions of wind and temp profiles (Dyer 1974)
-  if (ol > 0) {
-    phi <- 1 + 5 * zmol
-    phim <- 1 + 5 * zmol
-    phic <- 1 + 5 * zmol
-    m <- (1 + 5 * (zmol)) / (log(zm / zo) + 5 * zmol)
-    n <- 1 / (1 + 5 * zmol)
-  } else if (ol < 0) {
-    zeta <- (1 - 16 * (zmol))^(-1 / 4)
-    phi <- 1 / (zeta^2)
-    phim <- (1 - 16 * (zmol))^(-1 / 4)
-    phic <- (1 - 16 * (zmol))^(-1 / 2)
-    m <- ustar / k / zeta / ws
-    n <- (1 - 24 * zmol) / (1 - 16 * zmol)
-  }
-  
-  # Coefficients of diffusivity power law (Eqs. A.4-A.5)
-  #kappa <- (k * ustar * zm) / (phic * zm^n)
-  kappa <- (k * ustar * zm) / (phi * zm^n)
-  # Many different ways to calculate U
-  #U <- (ustar * log((zm / zo) + (phim))) / (k * zm^m)
-  #U <- (ustar * phim) / (k * m * zm^m) # neftel
-  U <- ws / zm^n
-  
-  # Intermediate parameters (Eqs. A.6-A.7; p = m)
-  r <- 2 + m - n
-  mu <- (1 + m) / r
-  
-  # Flux length scale (Eq. A.8)
-  xi <- (U * zm^r) / (r^2 * kappa)
-  
-  # Neftel parameters
-  A <- 1 + mu
-  B <- (U * (zm^r)) / (r^2 * kappa)
-  C <- B^mu / gamma(mu)
-  D <- sigmav / U * gamma(1 / r) / gamma(mu) * (U / (r^2 * kappa))^(m / r)
-  E <- (r - m) / r
+  ubar <- matrix(0, nrow = dims[1], ncol = dims[2])
+  f <- matrix(0, nrow = dims[1], ncol = dims[2])
+  sigmay <- matrix(0, nrow = dims[1], ncol = dims[2])
+  Dy <- matrix(0, nrow = dims[1], ncol = dims[2])
   
   # Subset downwind area of grid for calculating contributions
   dw <- x > 0
   
-  # Splitting Eq 2.1 into a few helpers as per OzFlux
-  h0[dw] <- x[dw]^E
-  h1[dw] <- (sqrt(2 * pi) * D * (h0[dw]))
-  h2[dw] <- exp(-(y[dw]^2) / (2 * (D * (h0[dw]))^2))
-  h3[dw] <- C * exp(-B / x[dw]) * (x[dw]^(-A))
+  # Set model constants
+  z <- zm - zd  # aerodynamic measurement height
+  k <- 0.4  # Von Karman constant
+  zl <- z / mo_length
   
-  # Combine helpers - two-dimensional footprint function (Eq. 2.1)
-  h2[dw] * h3[dw] / h1[dw]
+  # Dimensionless gradient functions of wind and temp profiles (Dyer 1974)
+  # Non-dimensional wind shear (Eq. 33)
+  phim <- if (mo_length > 0) { 
+    1 + 5 * zl
+  } else if (mo_length < 0) {
+    (1 - 16 * zl)^(-1 / 4)
+  }
   
+  # Heat (Eq. 34)
+  phic <- if (mo_length > 0) { 
+    1 + 5 * zl
+  } else if (mo_length < 0) {
+    (1 - 16 * zl)^(-1 / 2)
+  }
+  
+  # Eddy diffusivity (Eq. 32)
+  K <- (k * ustar * z) / (phic * zl)
+  
+  # Power law exponents (Eqs. 36)
+  m <- (ustar / k) * (phim / ws) # wind velocity
+  n <- if (mo_length > 0) { # eddy diffusivity
+    1 / (1 + 5 * zl)
+  } else if (mo_length < 0) {
+    (1 - 24 * zl) / (1 - 16 * zl)
+  } 
+  
+  # Constants in power-law profiles (Eqs. 11)
+  U <- ws / z^m # wind velocity
+  kappa <- K / z^n # eddy diffusivity
+  
+  # Intermediate parameters
+  r <- 2 + m - n # shape factor
+  mu <- (1 + m) / r # constant
+  
+  # Flux length scale (Eq. 19)
+  xi <- (U * z^r) / (r^2 * kappa)
+  
+  # Effective plume velocity (Eq. 18)
+  ubar[dw] <- (
+    (gamma(mu) / gamma(1 / r)) * (r^2 * kappa / U)^(m / r) * U * x[dw]^(m / r)
+  )
+  
+  # Crosswind integrated flux (Eq. 21)
+  f[dw] <- (1 / gamma(mu)) * (xi^mu / x[dw]^(1 + mu)) * exp(-xi / x[dw])
+  
+  # Crosswind distribution function (Eq. 9)
+  sigmay[dw] <- v_sigma * x[dw] / ubar[dw]
+  Dy[dw] <- (1 / (sqrt(2 * pi) * sigmay[dw])) * exp(-y[dw]^2/(2 * sigmay[dw]^2))
+  
+  # Crosswind distributed flux (Eq. 1)
+  f[dw] * Dy[dw]
+}
+
+## =============================================================================
+#' Fetch Distance Using Hsieh (2000) Model
+#'
+#' @param z
+#' @param zd
+#' @param zo
+#' @param mo_length
+#' @param p
+#'
+#' @export
+hsieh_ftp_dist <- function(z, zd, zo, mo_length, p) {
+  
+  # Recommended to gap-fill L prior to using this model
+  if (!is.na(mo_length)) {
+    # Define and calculate footprint parameters
+    k <- 0.4
+    dx <- 5
+    zm <- z - zd
+    zu <- zm * (log(zm / zo) - 1 + (zo / zm))
+    zL <- zu / mo_length
+    if (abs(zL) < 0.04) {
+      # Near neutral and neutral conditions
+      D <- 0.97
+      P <- 1
+      mu <- 500
+    } else if (zL < 0) {
+      # Unstable conditions
+      D <- 0.28
+      P <- 0.59
+      mu <- 100
+    } else if (zL > 0) {
+      # Stable conditions
+      D <- 2.44
+      P <- 1.33
+      mu <- 2000
+    }
+    DP <- D * zu^P * abs(mo_length)^(1 - P)
+    # Calculate x if flux percents are given
+    all_p <- p
+    p <- as.numeric(all_p[!suppressWarnings(is.na(as.numeric(all_p)))])
+    if (length(p) > 0) {
+      # Define footprint model
+      #f_int <- function(x) exp(-(D * zu^P * abs(L)^(1 - P) / (k^2 * x)))
+      #f_int <- function(x) {
+      #  fact <- D * zu^P * abs(L)^(1 - P) / (k^2 * (x * dx))
+      #  exp(-fact)
+      #}
+      f_int <- function(x) {
+        c1 <- (-1 / k^2) * (D * zu^P * abs(mo_length)^(1 - P)) / x
+        exp(c1)
+        #fc <- exp(c1) # Cumulative source contribution with distance
+        #-(c1 / x) * fc # Source-weight function
+      }
+      
+      # Peak distance
+      #xp <- (1 / 2 / k^2) * (D * zu^P * abs(L)^(1 - P))
+      # Fetch to height ratio
+      #f2h <- (D / 0.105 / k^2) * (zm^(-1) * abs(L)^(1 - P) * zu^(P))
+      
+      min_x <- (mu / 100) * zo
+      max_x <- mu * zm
+      x_bin <- (max_x - min_x) / 1000
+      
+      p <- c(1, sort(p))
+      fx <- rep(NA, length(p))
+      #x <- 1
+      x <- min_x
+      #browser()
+      while (x < max_x) {
+        fp <- f_int(x)
+        fx[which(((fp > (p / 100) & is.na(fx))) == TRUE)[1]] <- x
+        #fx[which(((fp > (p / 100) & is.na(fx))) == TRUE)[1]] <- x * dx
+        if (!anyNA(fx)) break # finished if all fetch lengths are found
+        x <- x + x_bin
+      }
+    }
+    # Calculate x if flux peak is requested
+    if ("peak" %in% all_p) {
+      peak <- DP / (2 * k^2)
+      fx <- c(fx, peak)
+    }
+  } else {
+    # Cannot get fetch lengths if meteorological parameters are absent
+    fx <- rep(NA, length(p) + 1)
+  }
+  
+  fx
+}
+
+## =============================================================================
+#' Fetch Distance Using Kormann & Meixner (2001) Model
+#'
+#' @param ws
+#' @param ustar
+#' @param zeta
+#' @param z
+#' @param zd
+#' @param p
+#'
+#' @export
+kormann_ftp_dist <- function(ws, ustar, zeta, z, zd, p) {
+  
+  # Simplify variable names
+  if (!is.na(ws) & !is.na(ustar) & !is.na(zeta)) {
+    # Calculate model parameters
+    zm <- z - zd  # measurement height
+    k <- 0.4  # Von Karman constant
+    if (zeta > 0) {
+      # similarity relations
+      phi_m <- 1 + 5 * zeta
+      phi_c <- phi_m
+      # exponent of diffusivity power law
+      n <- 1 / phi_m
+    } else if (zeta <= 0) {
+      # similarity relations
+      phi_m <- (1 - 16 * zeta)^-0.25
+      phi_c <- (1 - 16 * zeta)^-0.5
+      eta <- (1 - 16 * zeta)^0.25
+      # exponent of the diffusivity power law
+      n <- (1 - 24 * zeta) / (1 - 16 * zeta)
+    }
+    # Proportionality constant of the diffusivity power law (Eqs. 11 & 32)
+    key <- k * ustar * zm / (phi_c * zm^n)
+    # Exponent of the wind speed power law
+    m <- ustar * phi_m / (k * ws)
+    # Proportionality constant of the wind speed power law (Eqs. 11 & 31)
+    U <- ws / (zm^m)
+    # Intermediate parameters
+    r <- 2 + m - n  # shape factor
+    mu <- (1 + m) / r  # constant
+    xi <- U * zm^r / (r^2 * key)  # flux length scale
+    # Calculate x if flux percents are given
+    all_p <- p
+    p <- as.numeric(all_p[!suppressWarnings(is.na(as.numeric(all_p)))])
+    if (length(p) > 0) {
+      # Define footprint model as a function of x (distance from tower)
+      f <- function(x) xi^mu * exp(-xi / x) / (x^(1 + mu) * gamma(mu))
+      p <- sort(p)
+      fx <- rep(NA, length(p))
+      x <- 1
+      while (x < 10000) {
+        fp <- try(integrate(f, 0, x)$value, silent = TRUE)
+        if (class(fp) == "try-error") {
+          # Certain (uncommon) meteorological conditions result in a non-finite
+          # integral of the footprint function: set these records to NA
+          fp <- NA
+          break
+        }
+        fx[which(((fp > (p / 100) & is.na(fx))) == TRUE)[1]] <- x
+        if (!anyNA(fx)) break # finished if all fetch lengths are found
+        x <- x + 1
+      }
+    }
+    if ("peak" %in% all_p) {
+      peak <- xi / (1 + mu)
+      fx <- c(fx, peak)
+    }
+  } else {
+    # Cannot get fetch lengths if meteorological parameters are absent
+    fx <- rep(NA, length(p))
+  }
+  fx
 }
