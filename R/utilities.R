@@ -1,4 +1,14 @@
 
+# Performs vector operations on matrices while retaining matrix dimensions
+with_matrix <- function(x, .f) {
+  
+  dims <- dim(x)
+  mat_fun <- rlang::as_function(.f)
+  
+  vec <- mat_fun(as.vector(x))
+  
+  matrix(vec, nrow = dims[1], ncol = dims[2])
+}
 
 #' Construct matrix template for calculating footprint
 #'
@@ -49,7 +59,7 @@ grid_init <- function(extent, fetch, res = 1) {
 grid_template_rst <- function(grid, coords) {
   
   # lon range, lat range (not positive about the order)
-  grid_range <- c(range(grid$x + coords[2]), range(grid$y + coords[1]))
+  grid_range <- c(range(grid$y + coords[1]), range(grid$x + coords[2]))
   extent <- raster::extent(grid_range)
   
   # Return raster template
@@ -69,8 +79,12 @@ snap_to_grid <- function(x, grid, coords, resample_method = "ngb") {
   
   out <- raster::as.matrix(resampled)
   
-  # Mask AOI if exists in grid list
-  if (aoi %in% names(grid)) out <- out * grid$aoi
+  # Mask AOI if exists in grid list (maybe not, easier if there are no NAs)
+  if ("aoi" %in% names(grid)) {
+    aoi_mask <- grid$aoi
+    aoi_mask[which(aoi_mask == 0)] <- NA
+    #out <- out * aoi_mask
+  } 
   
   # Return matrix object fit to grid
   out
@@ -124,12 +138,48 @@ trim_matrix <- function(x, extent = get_trim_extent(x)) {
 
 plot_matrix <- function(x) {
   
+  if (storage.mode(x) == "character") {
+    x <- with_matrix(x, ~ unclass(as.factor(.x)))
+  } 
+  
   raster::plot(raster::raster(x))
 }
 
 
-#' @importFrom utils "write.table"
-write_matrix <- function(x, file, trunc = 9) {
+#' @importFrom tidyr "pivot_longer" tibble "as_tibble"
+pivot_matrix <- function(x) {
+  
+  if (storage.mode(x) == "character") {
+    x <- with_matrix(x, ~ unclass(as.factor(.x)))
+  }
+  
+  dims <- dim(x)
+  if (is.null(dimnames(x))) dimnames(x) <- list(1:dims[1], 1:dims[2])
+  
+  data <- x %>%
+    tibble::as_tibble(rownames = "y") %>%
+    tidyr::pivot_longer(-y, names_to = "x", values_to = "z") %>%
+    dplyr::mutate(dplyr::across(is.character, as.numeric))
+}
+
+
+plot_tidy_matrix <- function(x) {
+  
+  data <- pivot_matrix(x)
+  
+  data %>%
+    ggplot2::ggplot(ggplot2::aes(x = x, y = y, fill = z)) +
+    ggplot2::geom_tile() +
+    ggplot2::scale_fill_distiller(palette = "Spectral") +
+    ggplot2::labs(x = NULL, y = NULL, fill = NULL) +
+    ggplot2::coord_fixed() +
+    ggplot2::theme_void()
+}
+
+
+#' @importFrom readr "write_delim"
+#' @importFrom tibble "as_tibble"
+write_matrix <- function(x, file, trunc = 9, compress = TRUE) {
   
   # Convert data type to integer for more efficient storage
   # - this means weights below (1 / 'trunc') are effectively zero
@@ -138,21 +188,38 @@ write_matrix <- function(x, file, trunc = 9) {
     storage.mode(x) <- "integer"
   }
   
+  # Set path
+  file_path <- paste0(file, ".txt")
+  if (compress) file_path <- paste0(file_path, ".gz")
+  
+  # Convert to tbl for writing
+  tbl <- tibble::as_tibble(x, .name_repair = "minimal")
+  
   # Write to file
-  write.table(x, paste0(file, ".txt"), row.names = FALSE, col.names = FALSE)
+  readr::write_delim(tbl, file_path, col_names = FALSE)
 }
 
 
-#' @importFrom utils "read.table"
+#' @importFrom readr "read_table2" "cols" "col_integer" "col_double"
 read_matrix <- function(file, trunc = 9) {
   
-  data <- read.table(file, sep = " ")
+  if (!is.na(trunc)) {
+    scale <- 10^trunc
+    data_type <- readr::col_integer()
+  } else {
+    scale <- 1
+    data_type <- readr::col_double()
+  }
+  
+  data <- readr::read_table2(
+    file, col_names = FALSE, col_types = readr::cols(.default = data_type)
+  )
+  #data <- read.table(file, sep = " ")
   data_mat <- as.matrix(data)
   dimnames(data_mat) <- NULL
   
-  if (!is.na(trunc)) {
-    data_mat <- data_mat / 10^trunc
-  }
+  # Scale based on how data was stored
+  data_mat <- data_mat / scale
   
   data_mat
 }
