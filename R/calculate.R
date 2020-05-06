@@ -1,11 +1,40 @@
 
+## =============================================================================
+#' Two-dimensional footprint calculation
+#'
+#' @param grid A list of matrices as returned by [grid_init()]
+#' @param wd A numeric vector, wind direction in degrees from North
+#' @param ustar A numeric vector, friction velocity in ms+1s-1
+#' @param mo_length A numeric vector, Monin-Obukhov length in m
+#' @param v_sigma A numeric vector, standard deviation of the crosswind 
+#'   component
+#' @param blh A numeric vector, boundary layer height in m
+#' @param zm A numeric vector, measurement height in m
+#' @param zd A numeric vector, zero-plane displacement height in m
+#' @param zo A numeric vector, aerodynamic roughness length in m
+#' @param ... To be left empty, for flexible calls to a footprint function
+#'
+#' @return A matrix with same dimensions as each item of grid
+#' 
+#' @details
+#' The authors assert the following criteria must be met for their model to be 
+#' valid: 
+#' * ustar > 0.1
+#' * (zm - zd) / mo_length >= -15.5
+#' 
+#' @references
+#' Kljun, N., Calanca, P., Rotach, M. W., & Schmid, H. P. (2015). A simple 
+#' two-dimensional parameterisation for Flux Footprint Prediction (FFP). 
+#' Geoscientific Model Development, 8(11), 
+#' 3695–3713. https://doi.org/10.5194/gmd-8-3695-2015
+#' 
+#' @family footprints
+#' @export
 calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, 
-                                 z, zd, zo, ...) {
+                                 zm, zd, zo, ...) {
   
   # Get grid dimensions
   dims <- dim(grid$x)
-  
-  # Check required variables/conditions
   
   # Exit gracefully for invalid cases (return empty matrix)
   if (anyNA(c(wd, ustar, mo_length, v_sigma, blh))) {
@@ -19,196 +48,226 @@ calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh,
   phi <- matrix(0, nrow = dims[1], ncol = dims[2])
   
   # Subset downwind area of grid for calculating contributions
-  footprint <- kljun_model(
-    grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, blh, z, zd, zo, dims
-  )
-  
-  # Check model results, return empty matrix if unexpected
-  if (length(footprint) != prod(dims)) {
-    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
-  } 
-  
-  phi[grid_rot$x > 0] <- footprint
-  
-  phi
-}
-
-calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma, 
-                                 z, zd, zo, ...) {
-  
-  # Get grid dimensions
-  dims <- dim(grid$x)
-  
-  # Check required variables/conditions
-  
-  # Exit gracefully for invalid cases (return empty matrix)
-  if (anyNA(c(wd, ustar, mo_length, v_sigma))) {
-    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
-  } 
-  
-  # Rotate grid toward wind direction
-  grid_rot <- rotate_grid(grid, wd)
-  
-  # Initialize output grid
-  phi <- matrix(0, nrow = dims[1], ncol = dims[2])
+  dw <- grid_rot$x > 0
   
   # Subset downwind area of grid for calculating contributions
-  footprint <- hsieh_model(
-    grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, z, zd, zo, dims
+  footprint <- kljun_2d(
+    grid_rot$x[dw], grid_rot$y[dw], ustar, mo_length, v_sigma, blh, zm, zd, zo
   )
   
   # Check model results, return empty matrix if unexpected
-  if (length(footprint) != prod(dims)) {
+  if (all(is.na(footprint)) | length(footprint) != sum(dw)) {
     return(matrix(NA, nrow = dims[1], ncol = dims[2]))
   } 
   
-  phi[grid_rot$x > 0] <- footprint
-  
-  phi
-}
-
-calc_footprint_kormann <- function(grid, ws, wd, ustar, mo_length, v_sigma, 
-                                   z, zd, zo, ...) {
-  
-  # Get grid dimensions
-  dims <- dim(grid$x)
-  
-  # Check required variables/conditions
-  
-  # Exit gracefully for invalid cases (return empty matrix)
-  if (anyNA(c(wd, ustar, mo_length, v_sigma))) {
-    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
-  } 
-  
-  # Rotate grid toward wind direction
-  grid_rot <- rotate_grid(grid, wd)
-  
-  # Initialize output grid
-  phi <- matrix(0, nrow = dims[1], ncol = dims[2])
-  
-  # Subset downwind area of grid for calculating contributions
-  footprint <- kormann_model(
-    grid_rot$x, grid_rot$y, ws, ustar, mo_length, v_sigma, z, zd, zo, dims
-  )
-  
-  # Check model results, return empty matrix if unexpected
-  if (length(footprint) != prod(dims)) {
-    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
-  } 
-  
-  phi[grid_rot$x > 0] <- footprint
+  phi[dw] <- footprint
   
   phi
 }
 
 
 ## =============================================================================
-#' Calculate two-dimensional footprints
+#' Two-dimensional footprint calculation
 #'
-#' Create a two-dimensional matrix of footprint probabilities.
-#'
-#' @param wd A numeric vector, wind direction in degrees from North.
-#' @param ustar A numeric vector, friction velocity in ms+1s-1.
-#' @param mo_length A numeric vector, Monin-Obukhov length in m.
+#' @param grid A list of matrices as returned by [grid_init()]
+#' @param wd A numeric vector, wind direction in degrees from North
+#' @param ustar A numeric vector, friction velocity in ms+1s-1
+#' @param mo_length A numeric vector, Monin-Obukhov length in m
 #' @param v_sigma A numeric vector, standard deviation of the crosswind 
-#'   component.
-#' @param ws A numeric vector, wind speed in ms+1s-1.
-#' @param blh A numeric value, boundary layer height in m.
-#' @param z A numeric value, tower height in m.
-#' @param zd A numeric value, zero-plane displacement height in m.
-#' @param zo The aerodynamic roughness length in m.
-#' @param grid A list of length two containing matrices of equal dimensions,
-#'   indicating x and y coordinates. Template returned by \link{grid_init}.
-#' @param model A character string naming the model to be used in footprint
-#'   calculations. Can be "KM01" for the Kormann & Meixner (2001) model or "H00"
-#'   for the Hsieh et al. (2000) model.
+#'   component
+#' @param zm A numeric vector, measurement height in m
+#' @param zd A numeric vector, zero-plane displacement height in m
+#' @param zo A numeric vector, aerodynamic roughness length in m
+#' @param ... To be left empty, for flexible calls to a footprint function
 #'
-#' @details Support only for square grids at the moment.
-#'
+#' @return A matrix with same dimensions as each item of grid
+#' 
+#' @references
+#' Detto, M., Montaldo, N., Albertson, J. D., Mancini, M., & Katul, G. (2006). 
+#' Soil moisture and vegetation controls on evapotranspiration in a 
+#' heterogeneous Mediterranean ecosystem on Sardinia, Italy. Water Resources 
+#' Research, 42(8), 1–16. https://doi.org/10.1029/2005WR004693
+#' 
+#' Hsieh, C.-I., Katul, G., & Chi, T. (2000). An approximate analytical model 
+#' for footprint estimation of scalar fluxes in thermally stratified atmospheric 
+#' flows. Advances in Water Resources, 23(7), 765–772. 
+#' https://doi.org/10.1016/S0309-1708(99)00042-1
+#' 
+#' @family footprints
 #' @export
-#'
-calc_footprint <- function(grid, wd, ustar, mo_length, v_sigma, z, zd, zo, 
-                           ws = NULL, blh = NULL, 
-                           model = c("H00", "K15", "KM01")) {
-  
-  model <- match.arg(model)
+calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma, 
+                                 zm, zd, zo, ...) {
   
   # Get grid dimensions
-  n <- dim(grid$x)[1]
-  
-  # Check for equal dimensions
-  #if (n != dim(grid$x)[2]) stop("Only square grids supported.", call. = FALSE)
-  
-  # Check required variables/conditions
-  vars <- c(wd, ustar, mo_length, v_sigma)
-  invalid <- FALSE
-  if (model == "KM01") {
-    vars <- c(ws, vars)
-    # Kormann model assumptions must be met: abs(zeta) > 3
-    invalid <- !dplyr::between((z - zd) / mo_length, -3, 3)
-  } else invalid <- FALSE
-  if (model == "K15") {
-    vars <- c(blh, vars)
-    # Kljun model assumptions must be met: ustar > 0.1, zm / L >= -15.5
-    #invalid <- ustar >= 0.1 & ((z - zd) / mo_length) >= -15.5
-  }
+  dims <- dim(grid$x)
   
   # Exit gracefully for invalid cases (return empty matrix)
-  if (anyNA(vars) | invalid) {
-    return(matrix(NA, nrow = nrow(grid$x), ncol = ncol(grid$x)))
+  if (anyNA(c(wd, ustar, mo_length, v_sigma))) {
+    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
   } 
-  
-  # Set initial output grid
-  phi <- matrix(0, nrow = n, ncol = n)
   
   # Rotate grid toward wind direction
   grid_rot <- rotate_grid(grid, wd)
+  
+  # Initialize output grid
+  phi <- matrix(0, nrow = dims[1], ncol = dims[2])
   
   # Subset downwind area of grid for calculating contributions
   dw <- grid_rot$x > 0
   
-  # Execute chosen model
-  if (model == "KM01") {
-    # Kormann model
-    phi[dw] <- kormann_model(
-      grid_rot$x, grid_rot$y, ws, ustar, mo_length, v_sigma, z, zd, zo, n
-    )
-  } else if (model == "H00") {
-    # Hsieh model
-    phi[dw] <- hsieh_model(
-      grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, z, zd, zo, n
-    )
-  } else if (model == "K15") {
-    # Kljun model
-    phi[dw] <- kljun_model(
-      grid_rot$x, grid_rot$y, ustar, mo_length, v_sigma, blh, z, zd, zo, n
-    )
-  }
+  # Execute model
+  footprint <- hsieh_2d(
+    grid_rot$x[dw], grid_rot$y[dw], ustar, mo_length, v_sigma, zm, zd, zo
+  )
   
-  # In case of invalid output within footprint function, return entire grid NA
-  #if (all(is.na(phi[dw]))) phi <- matrix(NA, nrow = n, ncol = n)
+  # Check model results, return empty matrix if unexpected
+  if (all(is.na(footprint)) | length(footprint) != sum(dw)) {
+    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
+  } 
   
-  # Output matrix holding footprint probabilities
+  phi[dw] <- footprint
+  
   phi
 }
 
 
 ## =============================================================================
-#' Calculate Fetch Distances for a Dataset
+#' Two-dimensional footprint calculation
 #'
-#' @description
+#' @param grid A list of matrices as returned by [grid_init()] 
+#' @param wd A numeric vector, wind direction in degrees from North
+#' @param ws A numeric vector
+#' @param ustar A numeric vector, friction velocity in ms+1s-1
+#' @param mo_length A numeric vector, Monin-Obukhov length in m
+#' @param v_sigma A numeric vector, standard deviation of the crosswind 
+#'   component
+#' @param zm A numeric vector, measurement height in m
+#' @param zd A numeric vector, zero-plane displacement height in m
+#' @param ... To be left empty, for flexible calls to a footprint function
 #'
-#' @param data
-#' @param z
-#' @param zd
-#' @param roughness_length
-#' @param percent
-#' @param method
-#'
-#' @return
+#' @return A matrix with same dimensions as each item of grid
+#' 
+#' @references
+#' Kormann, R., & Meixner, F. X. (2001). An Analytical Footprint Model For 
+#' Non-Neutral Stratification. Boundary-Layer Meteorology, 99(2), 207–224. 
+#' <https://doi.org/10.1023/A:1018991015119>
+#' 
+#' @family footprints
 #' @export
-#'
-#' @examples
+calc_footprint_kormann <- function(grid, wd, ws, ustar, mo_length, v_sigma, 
+                                   zm, zd, ...) {
+  
+  # Get grid dimensions
+  dims <- dim(grid$x)
+  
+  # Check required variables/conditions
+  
+  # Exit gracefully for invalid cases (return empty matrix)
+  if (anyNA(c(ws, wd, ustar, mo_length, v_sigma))) {
+    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
+  } 
+  
+  # Rotate grid toward wind direction
+  grid_rot <- rotate_grid(grid, wd)
+  
+  # Initialize output grid
+  phi <- matrix(0, nrow = dims[1], ncol = dims[2])
+  
+  # Subset downwind area of grid for calculating contributions
+  dw <- grid_rot$x > 0
+  
+  # Execute model
+  footprint <- kormann_2d(
+    grid_rot$x[dw], grid_rot$y[dw], ws, ustar, mo_length, v_sigma, zm, zd
+  )
+  
+  # Check model results, return empty matrix if unexpected
+  if (all(is.na(footprint)) | length(footprint) != sum(dw)) {
+    return(matrix(NA, nrow = dims[1], ncol = dims[2]))
+  } 
+  
+  phi[dw] <- footprint
+  
+  phi
+}
+
+
+calc_fetch_kormann <- function(pct, ws, ustar, mo_length, zm, zd, ...) {
+  
+  # Calculate x if flux percents are given
+  where <- pct
+  pct <- na.omit(purrr::quietly(as.numeric)(pct)$result)
+  pct <- sort(pct)
+  
+  if (length(pct) > 0) {
+    # Define footprint model as a function of x (distance from tower)
+    f <- function(x) xi^mu * exp(-xi / x) / (x^(1 + mu) * gamma(mu))
+    p <- sort(p)
+    fx <- rep(NA, length(p))
+    x <- 1
+    while (x < 10000) {
+      fp <- try(integrate(f, 0, x)$value, silent = TRUE)
+      if (class(fp) == "try-error") {
+        # Certain (uncommon) meteorological conditions result in a non-finite
+        # integral of the footprint function: set these records to NA
+        fp <- NA
+        break
+      }
+      fx[which(((fp > (p / 100) & is.na(fx))) == TRUE)[1]] <- x
+      if (!anyNA(fx)) break # finished if all fetch lengths are found
+      x <- x + 1
+    }
+  }
+  if ("peak" %in% all_p) {
+    peak <- xi / (1 + mu)
+    fx <- c(fx, peak)
+  }
+}
+
+
+calc_fetch_hsieh <- function(pct = c("offset", "peak", 30, 50, 70, 80, 90), 
+                             mo_length, zm, zd, zo, ...) {
+  
+  # Fail gracefully if missing values
+  if (anyNA(c(mo_length, zm, zd, zo))) {
+    return(rep(NA, length(pct)))
+  } 
+  
+  # Prepare decimal percents at which distances should be found
+  pos <- pct
+  pct <- check_percents(pct)
+  if ("offset" %in% pos) pct <- c(0.01, pct)
+  
+  # Calculate x if flux percents are given
+  if (length(pct) > 0) {
+    
+    min_x <- (mu / 100) * zo
+    max_x <- mu * zm
+    x_bin <- (max_x - min_x) / 1000
+    
+    pct <- sort(pct)
+    fx <- rep(NA, length(pct))
+    
+    x <- min_x
+    
+    while (x < max_x) {
+      
+      fp <- hsieh_1d(x, mo_length, zm, zd, zo)$Fy
+      fx[which(((fp > pct & is.na(fx))) == TRUE)[1]] <- x
+      
+      if (!anyNA(fx)) break # finished if all fetch lengths are found
+      x <- x + x_bin
+    }
+  }
+  
+  # Calculate x if peak distance is requested
+  if ("peak" %in% pct) {
+    peak <- DP / (2 * k^2)
+    fx <- c(fx, peak)
+  }
+}
+
+
 fp_fetch <- function(data, ws = "ws", ustar = "ustar", zeta = "zeta",
                      mo_length = "mo_length", z, zd, zo, percent,
                      method = c("KM01", "H00", "K04")) {
@@ -216,9 +275,8 @@ fp_fetch <- function(data, ws = "ws", ustar = "ustar", zeta = "zeta",
   # Simplify variables names
   x <- rep(NA, nrow(data))
   p <- sort(percent)
-  method <- match.arg(method)
+  method <- rlang::arg_match(method)
   
-  pbar <- dplyr::progress_estimated(length(x))
   if (method == "KM01") {
     vars <- c(ws, ustar, zeta)
     if (!all(vars %in% names(data))) {
@@ -239,7 +297,6 @@ fp_fetch <- function(data, ws = "ws", ustar = "ustar", zeta = "zeta",
       zeta_ <- data[i, zeta]
       # Execute model function
       out[i, ] <- kormann_ftp_dist(ws_, ustar_, zeta_, z, zd, p)
-      pbar$tick()$print()
     }
   } else if (method == "H00") {
     if (!mo_length %in% names(data)) stop("Missing mo_length.", call. = FALSE)
@@ -255,7 +312,6 @@ fp_fetch <- function(data, ws = "ws", ustar = "ustar", zeta = "zeta",
       l_ <- data[i, mo_length]
       # Execute model function
       out[i, ] <- hsieh_ftp_dist(z, zd, zo, l_, p)
-      pbar$tick()$print()
     }
   }
   # Return vector if only one p was requested
@@ -268,7 +324,7 @@ fp_fetch <- function(data, ws = "ws", ustar = "ustar", zeta = "zeta",
 #'
 #' @param x A list of footprint matrices.
 #' @param grid A list of length two containing matrices of equal dimensions,
-#'   indicating x and y coordinates. Template returned by \link{grid_init}.
+#'   indicating x and y coordinates. Template returned by grid_init.
 #' @param weights A vector of same length as x
 #'
 #' @export
@@ -323,6 +379,17 @@ calc_climatology <- function(x, grid, weights = NULL) {
 }
 
 
+#' Footprint-weighted land cover
+#' 
+#' @param x A numeric matrix
+#' @param y A numeric matrix
+#' @param type The type of convolution to take place, either "factor" or 
+#'   "numeric"
+#' @param levels A vector
+#' @param ignore_levels A vector
+#'
+#' @importFrom stats "na.omit"
+#' @export
 summarize_cover <- function(x, y, type = c("factor", "numeric"), levels, 
                             ignore_levels = 0) {
   
