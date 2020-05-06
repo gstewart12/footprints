@@ -10,6 +10,7 @@ with_matrix <- function(x, .f) {
   matrix(vec, nrow = dims[1], ncol = dims[2])
 }
 
+
 #' Construct matrix template for calculating footprint
 #'
 #' @param extent A numeric vector of length four
@@ -53,17 +54,6 @@ grid_init <- function(extent, fetch, res = 1) {
   out <- list(x = x_2d, y = y_2d)
   attributes(out) <- list("names" = names(out), "fetch" = fetch, "res" = res)
   out
-}
-
-
-grid_template_rst <- function(grid, coords) {
-  
-  # lon range, lat range (not positive about the order)
-  grid_range <- c(range(grid$y + coords[1]), range(grid$x + coords[2]))
-  extent <- raster::extent(grid_range)
-  
-  # Return raster template
-  raster::raster(extent, nrows = nrow(grid$x), ncols = ncol(grid$x))
 }
 
 
@@ -154,23 +144,27 @@ pivot_matrix <- function(x) {
   }
   
   dims <- dim(x)
-  if (is.null(dimnames(x))) dimnames(x) <- list(1:dims[1], 1:dims[2])
+  if (is.null(dimnames(x))) dimnames(x) <- list(rev(1:dims[1]), 1:dims[2])
   
-  data <- x %>%
+  x %>%
     tibble::as_tibble(rownames = "y") %>%
     tidyr::pivot_longer(-y, names_to = "x", values_to = "z") %>%
     dplyr::mutate(dplyr::across(is.character, as.numeric))
 }
 
 
-plot_tidy_matrix <- function(x) {
+plot_tidy_matrix <- function(x, trans = NA) {
+  
+  # trans = "sqrt" best for individual footprints
+  # trans = "log" best for footprint topology
+  if (is.na(trans)) trans <- "identity"
   
   data <- pivot_matrix(x)
   
   data %>%
     ggplot2::ggplot(ggplot2::aes(x = x, y = y, fill = z)) +
     ggplot2::geom_tile() +
-    ggplot2::scale_fill_distiller(palette = "Spectral") +
+    ggplot2::scale_fill_distiller(palette = "Spectral", trans = trans) +
     ggplot2::labs(x = NULL, y = NULL, fill = NULL) +
     ggplot2::coord_fixed() +
     ggplot2::theme_void()
@@ -212,7 +206,8 @@ read_matrix <- function(file, trunc = 9) {
   }
   
   data <- readr::read_table2(
-    file, col_names = FALSE, col_types = readr::cols(.default = data_type)
+    file, col_names = FALSE, col_types = readr::cols(.default = data_type),
+    progress = FALSE
   )
   #data <- read.table(file, sep = " ")
   data_mat <- as.matrix(data)
@@ -242,6 +237,13 @@ read_grid <- function(path, names = c("x", "y")) {
   grid_files %>% 
     purrr::map(read_matrix, trunc = NA) %>%
     rlang::set_names(names)
+}
+
+
+pluck_cell <- function(x, grid, coords) {
+  
+  cell_loc <- which(grid$x == coords[1] & grid$y == coords[2])
+  x[cell_loc]
 }
 
 
@@ -275,15 +277,25 @@ fp_rasterize <- function(x, grid, coords, crs) {
 
 
 rotate_grid <- function(grid, dir) {
-  
+  #browser()
   # Calculate wind direction angle
-  theta <- ((360 - dir) %% 360) * (pi / 180)
+  #theta <- ((360 - dir) %% 360) * (pi / 180)
+  
+  #out <- grid
+  
+  # Rotate coordinates toward wind direction
+  #out$x <- grid$x * cos(theta) - grid$y * sin(theta)
+  #out$y <- grid$x * sin(theta) + grid$y * cos(theta)
   
   out <- grid
   
-  # Rotate coordinates toward wind direction
-  out$x <- grid$x * cos(theta) - grid$y * sin(theta)
-  out$y <- grid$x * sin(theta) + grid$y * cos(theta)
+  # Distance and direction of each grid cell
+  fpd <- sqrt(grid$y^2 + grid$x^2)
+  fpa <- atan2(grid$x, grid$y) * 180 / pi - dir
+  
+  # Rotate original coordinates using grid vectors
+  out$x <- cos(fpa * pi / 180) * fpd
+  out$y <- -1 * sin(fpa * pi / 180) * fpd
   
   out
 }
