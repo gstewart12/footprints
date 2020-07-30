@@ -10,7 +10,7 @@ calc_climatology(x, grid, weights = NULL)
 \item{x}{A list of footprint matrices.}
 
 \item{grid}{A list of length two containing matrices of equal dimensions,
-indicating x and y coordinates. Template returned by \link{grid_init}.}
+indicating x and y coordinates. Template returned by grid_init.}
 
 \item{weights}{A vector of same length as x}
 }

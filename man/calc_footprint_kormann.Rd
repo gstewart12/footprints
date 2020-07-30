@@ -11,9 +11,9 @@ calc_footprint_kormann(grid, wd, ws, ustar, mo_length, v_sigma, zm, zd, ...)
 
 \item{wd}{A numeric vector, wind direction in degrees from North}
 
-\item{ws}{A numeric vector}
+\item{ws}{A numeric vector, wind speed in m+1s-1}
 
-\item{ustar}{A numeric vector, friction velocity in ms+1s-1}
+\item{ustar}{A numeric vector, friction velocity in m+1s-1}
 
 \item{mo_length}{A numeric vector, Monin-Obukhov length in m}
 

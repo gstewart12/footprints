@@ -7,27 +7,27 @@
 calc_footprint_hsieh(grid, wd, ustar, mo_length, v_sigma, zm, zd, zo, ...)
 }
 \arguments{
-\item{grid}{A list of matrices as returned by \code{\link[=grid_init]{grid_init()}}}
+\item{grid}{A list of matrices as returned by \code{\link[=grid_init]{grid_init()}}.}
 
-\item{wd}{A numeric vector, wind direction in degrees from North}
+\item{wd}{A numeric vector, wind direction in degrees from North.}
 
-\item{ustar}{A numeric vector, friction velocity in ms+1s-1}
+\item{ustar}{A numeric vector, friction velocity in m+1s-1.}
 
-\item{mo_length}{A numeric vector, Monin-Obukhov length in m}
+\item{mo_length}{A numeric vector, Monin-Obukhov length in m.}
 
 \item{v_sigma}{A numeric vector, standard deviation of the crosswind
-component}
+component.}
 
-\item{zm}{A numeric vector, measurement height in m}
+\item{zm}{A numeric vector, measurement height in m,}
 
-\item{zd}{A numeric vector, zero-plane displacement height in m}
+\item{zd}{A numeric vector, zero-plane displacement height in m.}
 
-\item{zo}{A numeric vector, aerodynamic roughness length in m}
+\item{zo}{A numeric vector, aerodynamic roughness length in m.}
 
-\item{...}{To be left empty, for flexible calls to a footprint function}
+\item{...}{To be left empty, for flexible calls to a footprint function.}
 }
 \value{
-A matrix with same dimensions as each item of grid
+A matrix with same dimensions as each item of grid.
 }
 \description{
 Two-dimensional footprint calculation
