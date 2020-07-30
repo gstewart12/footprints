@@ -2,36 +2,41 @@
 ## =============================================================================
 #' Two-dimensional footprint calculation
 #'
-#' @param grid A list of matrices as returned by [grid_init()]
-#' @param wd A numeric vector, wind direction in degrees from North
-#' @param ustar A numeric vector, friction velocity in ms+1s-1
-#' @param mo_length A numeric vector, Monin-Obukhov length in m
+#' @param grid A list of matrices as returned by [grid_init()].
+#' @param wd A numeric vector, wind direction in degrees from North.
+#' @param ustar A numeric vector, friction velocity in m+1s-1.
+#' @param mo_length A numeric vector, Monin-Obukhov length in m.
 #' @param v_sigma A numeric vector, standard deviation of the crosswind 
-#'   component
-#' @param blh A numeric vector, boundary layer height in m
-#' @param zm A numeric vector, measurement height in m
-#' @param zd A numeric vector, zero-plane displacement height in m
-#' @param zo A numeric vector, aerodynamic roughness length in m
-#' @param ... To be left empty, for flexible calls to a footprint function
+#'   component.
+#' @param blh A numeric vector, boundary layer height in m.
+#' @param z A numeric vector, measurement height in m.
+#' @param zd A numeric vector, zero-plane displacement height in m.
+#' @param z0 A numeric vector, aerodynamic roughness length in m.
+#' @param ws A numeric vector, wind speed in m+1s-1. If NULL (the default),
+#'   roughness length will be used as provided.
+#' @param ... To be left empty, for flexible calls to a footprint function.
 #'
-#' @return A matrix with same dimensions as each item of grid
+#' @return A matrix with same dimensions as each item of grid.
 #' 
 #' @details
 #' The authors assert the following criteria must be met for their model to be 
 #' valid: 
 #' * ustar > 0.1
 #' * (zm - zd) / mo_length >= -15.5
+#' * (20)zo < zm < blh
 #' 
 #' @references
 #' Kljun, N., Calanca, P., Rotach, M. W., & Schmid, H. P. (2015). A simple 
 #' two-dimensional parameterisation for Flux Footprint Prediction (FFP). 
-#' Geoscientific Model Development, 8(11), 
-#' 3695–3713. https://doi.org/10.5194/gmd-8-3695-2015
+#' Geoscientific Model Development, 8(11), 3695–3713. 
+#' https://doi.org/10.5194/gmd-8-3695-2015
 #' 
 #' @family footprints
 #' @export
 calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, 
-                                 zm, zd, zo, ...) {
+                                 z, zd, z0, ws = NULL, ...) {
+  
+  # TODO give choice of whether to choose z0 or calculate it (Eqs. 6-9)
   
   # Get grid dimensions
   dims <- dim(grid$x)
@@ -50,10 +55,17 @@ calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh,
   # Subset downwind area of grid for calculating contributions
   dw <- grid_rot$x > 0
   
-  # Subset downwind area of grid for calculating contributions
-  footprint <- kljun_2d(
-    grid_rot$x[dw], grid_rot$y[dw], ustar, mo_length, v_sigma, blh, zm, zd, zo
+  args <- list(
+    x = grid_rot$x[dw], y = grid_rot$y[dw], 
+    ustar = ustar, mo_length = mo_length, v_sigma = v_sigma, blh = blh, 
+    z = z, zd = zd, z0 = z0
   )
+  
+  # If WS is given, add it to list of parameters
+  if (!is.null(ws)) args <- append(args, list(ws = ws))
+  
+  # Subset downwind area of grid for calculating contributions
+  footprint <- rlang::exec(kljun_2d, !!!args)
   
   # Check model results, return empty matrix if unexpected
   if (all(is.na(footprint)) | length(footprint) != sum(dw)) {
@@ -69,18 +81,18 @@ calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh,
 ## =============================================================================
 #' Two-dimensional footprint calculation
 #'
-#' @param grid A list of matrices as returned by [grid_init()]
-#' @param wd A numeric vector, wind direction in degrees from North
-#' @param ustar A numeric vector, friction velocity in ms+1s-1
-#' @param mo_length A numeric vector, Monin-Obukhov length in m
+#' @param grid A list of matrices as returned by [grid_init()].
+#' @param wd A numeric vector, wind direction in degrees from North.
+#' @param ustar A numeric vector, friction velocity in m+1s-1.
+#' @param mo_length A numeric vector, Monin-Obukhov length in m.
 #' @param v_sigma A numeric vector, standard deviation of the crosswind 
-#'   component
-#' @param zm A numeric vector, measurement height in m
-#' @param zd A numeric vector, zero-plane displacement height in m
-#' @param zo A numeric vector, aerodynamic roughness length in m
-#' @param ... To be left empty, for flexible calls to a footprint function
+#'   component.
+#' @param z A numeric vector, measurement height in m,
+#' @param zd A numeric vector, zero-plane displacement height in m.
+#' @param z0 A numeric vector, aerodynamic roughness length in m.
+#' @param ... To be left empty, for flexible calls to a footprint function.
 #'
-#' @return A matrix with same dimensions as each item of grid
+#' @return A matrix with same dimensions as each item of grid.
 #' 
 #' @references
 #' Detto, M., Montaldo, N., Albertson, J. D., Mancini, M., & Katul, G. (2006). 
@@ -96,7 +108,7 @@ calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh,
 #' @family footprints
 #' @export
 calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma, 
-                                 zm, zd, zo, ...) {
+                                 z, zd, z0, ...) {
   
   # Get grid dimensions
   dims <- dim(grid$x)
@@ -117,7 +129,7 @@ calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma,
   
   # Execute model
   footprint <- hsieh_2d(
-    grid_rot$x[dw], grid_rot$y[dw], ustar, mo_length, v_sigma, zm, zd, zo
+    grid_rot$x[dw], grid_rot$y[dw], ustar, mo_length, v_sigma, z, zd, z0
   )
   
   # Check model results, return empty matrix if unexpected
@@ -134,16 +146,21 @@ calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma,
 ## =============================================================================
 #' Two-dimensional footprint calculation
 #'
-#' @param grid A list of matrices as returned by [grid_init()] 
-#' @param wd A numeric vector, wind direction in degrees from North
-#' @param ws A numeric vector
-#' @param ustar A numeric vector, friction velocity in ms+1s-1
-#' @param mo_length A numeric vector, Monin-Obukhov length in m
+#' @param grid A list of matrices as returned by [grid_init()].
+#' @param wd A numeric vector, wind direction in degrees from North.
+#' @param ws A numeric vector, wind speed in m+1s-1.
+#' @param ustar A numeric vector, friction velocity in m+1s-1.
+#' @param mo_length A numeric vector, Monin-Obukhov length in m.
 #' @param v_sigma A numeric vector, standard deviation of the crosswind 
-#'   component
-#' @param zm A numeric vector, measurement height in m
-#' @param zd A numeric vector, zero-plane displacement height in m
-#' @param ... To be left empty, for flexible calls to a footprint function
+#'   component.
+#' @param z A numeric vector, measurement height in m.
+#' @param zd A numeric vector, zero-plane displacement height in m.
+#' @param approach Either "analytical" (the default) or "numerical". Corresponds
+#'   to the two different approaches for relating the power law to Monin-Obukhov
+#'   similarity as described in Kormann & Meixner (2001). The analytical
+#'   approach is more computationally efficient, while according to the authors
+#'   the numerical approach produces better results.
+#' @param ... To be left empty, for flexible calls to a footprint function.
 #'
 #' @return A matrix with same dimensions as each item of grid
 #' 
@@ -154,8 +171,11 @@ calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma,
 #' 
 #' @family footprints
 #' @export
-calc_footprint_kormann <- function(grid, wd, ws, ustar, mo_length, v_sigma, 
-                                   zm, zd, ...) {
+calc_footprint_kormann <- function(grid, wd, ws, ustar, mo_length, v_sigma, z,
+                                   zd, approach = c("analytical", "numerical"), 
+                                   ...) {
+  
+  approach <- rlang::arg_match(approach)
   
   # Get grid dimensions
   dims <- dim(grid$x)
@@ -178,7 +198,8 @@ calc_footprint_kormann <- function(grid, wd, ws, ustar, mo_length, v_sigma,
   
   # Execute model
   footprint <- kormann_2d(
-    grid_rot$x[dw], grid_rot$y[dw], ws, ustar, mo_length, v_sigma, zm, zd
+    grid_rot$x[dw], grid_rot$y[dw], ws, ustar, mo_length, v_sigma, z, zd, 
+    approach
   )
   
   # Check model results, return empty matrix if unexpected
@@ -189,6 +210,55 @@ calc_footprint_kormann <- function(grid, wd, ws, ustar, mo_length, v_sigma,
   phi[dw] <- footprint
   
   phi
+}
+
+
+calc_fetch_kljun <- function(pct, ustar, mo_length, blh, z, zd, z0, ws = NULL, 
+                             max_x = 1000, dx = 1, offset = 0.01, peak = TRUE, 
+                             ...) {
+  
+  if (any(pct >= 1)) {
+    stop("All 'pct' values must be < 1.0.", call. = FALSE)
+  }
+  #browser()
+  x <- seq(dx, max_x, by = dx)
+  
+  args <- list(
+    x = x, ustar = ustar, mo_length = mo_length, blh = blh, 
+    z = z, zd = zd, z0 = z0
+  )
+  
+  # If WS is given, add it to list of parameters
+  if (!is.null(ws)) args <- append(args, list(ws = ws))
+  
+  # Calculate crosswind-integrated footprint along x values
+  ci <- rlang::exec(kljun_1d, !!!args)
+  
+  # Calculate cumulative footprint weight (i.e. integrate the curve)
+  f_cume <- cumsum(ci$f) * dx
+  
+  #x_pct <- lapply(pct, function(.x) x[f_cume > .x][1])
+  #x_pct <- lapply(x_pct, function(.x) if (.x == 100) NA else .x)
+  
+  # Find first x value where f_cume is greater than pct (fetch distance)
+  x_pct <- purrr::map_dbl(pct, ~ x[f_cume > .x][1])
+  # Remove fetch distances at upper integration limit
+  x_pct[x_pct == max_x] <- NA
+  
+  x_pct <- as.list(x_pct)
+  names(x_pct) <- paste0("fetch_", pct * 100, "_k15")
+  
+  if (!is.null(offset)) {
+    # Add offset distance (location of 1% contribution)
+    x_pct[["fetch_offset_k15"]] <- x[f_cume > offset][1]
+  }
+  
+  if (peak) {
+    # Add peak distance
+    x_pct[["fetch_peak_k15"]] <- ci$x_max
+  }
+  
+  x_pct
 }
 
 
@@ -399,7 +469,8 @@ summarize_cover <- function(x, y, type = c("factor", "numeric"), levels,
     
     # Convolve matrices, normalize by total footprint weight
     #out <- sum((x / sum(x)) * y)
-    out <- sum(x * y) / sum(x)
+    #out <- sum(x * y) / sum(x)
+    out <- sum(x * y)
     
     return(out)
   }
