@@ -1,11 +1,12 @@
 
 ## =============================================================================
-kljun_1d <- function(x, ustar, mo_length, blh, zm, zd, zo) {
+kljun_1d <- function(x, ustar, mo_length, blh, z, zd, z0, ws = NULL) {
   
   # Set model constants
   n_lim <- 5000 # Limit for neutral scaling
   k <- 0.4  # Von Karman constant
-  z <- zm - zd  # aerodynamic measurement height
+  zm <- z - zd  # aerodynamic measurement height
+  L <- mo_length
   
   # Crosswind-integrated footprint parameters (Eq. 17)
   a <- 1.4524
@@ -13,46 +14,64 @@ kljun_1d <- function(x, ustar, mo_length, blh, zm, zd, zo) {
   c <- 1.4622
   d <- 0.1359
   
-  # Non-dimensional wind shear Psi (Eq. 5)
-  if (mo_length <= 0 | mo_length >= n_lim) {
-    xx <- (1 - 19.0 * z / mo_length)^0.25
-    psi <- log((1 + xx^2) / 2) + 2 * log((1 + xx) / 2) - 2 * atan(xx) + pi / 2
-  } else if (mo_length > 0 & mo_length < n_lim) {
-    psi <- -5.3 * z / mo_length
+  # Non-dimensional wind shear (Eq. 5)
+  if (L <= 0 | L >= n_lim) {
+    chi <- (1 - 19 * zm / L)^(1/4)
+    psim <- (
+      log((1 + chi^2) / 2) + 2 * log((1 + chi) / 2) - 2 * atan(chi) + pi / 2
+    )
+  } else if (L > 0 & L < n_lim) {
+    psim <- -5.3 * zm/L
+  }
+  
+  # Dimensionless Pi groups (Eqs. 4)
+  pi2 <- x / zm
+  pi3 <- 1 - zm/blh
+  pi4 <- if (!is.null(ws)) {
+    ws / ustar * k
+  } else {
+    log(zm/z0) - psim
   }
   
   # Fail gracefully under invalid conditions
-  if ((log(z / zo) - psi) <= 0) {
-    return(list(z = z, xstar = rep(NA, length(x)), f = rep(NA, length(x))))
+  if (pi4 <= 0) {
+    return(list(xstar = rep(NA, length(x)), f = rep(NA, length(x))))
   }
   
-  # Non-dimensional upwind distance X* for given x (Eq. 7)
-  xstar <- (x / z) * (1 - z / blh) / (log(z / zo) - psi)
+  # Non-dimensional upwind distance X* for given x (Eqs. 7-8)
+  xstar <- pi2 * pi3/pi4
+  
+  # Peak location of influence (Eqs. 20-22)
+  xstar_max <- -c/b + d
+  x_max <- xstar_max * zm/pi3 * pi4
   
   # Parameterized crosswind-integrated footprint F* (Eq. 14)
   fstar <- a * (xstar - d)^b * exp(-c / (xstar - d))
   fstar[which(xstar - d < 0)] <- 0
   
-  # Crosswind-integrated footprint F (Eq. 9)
-  f <- fstar / z * (1 - (z / blh)) / (log(z / zo) - psi)
+  # Crosswind-integrated footprint F (Eqs. 9-10)
+  f <- fstar / zm * pi3 / pi4
   
   # Return list including intermediates
-  list(z = z, xstar = xstar, f = f)
+  list(xstar = xstar, x_max = x_max, f = f)
 }
 
 
 ## =============================================================================
-kljun_2d <- function(x, y, ustar, mo_length, v_sigma, blh, zm, zd, zo) {
+kljun_2d <- function(x, y, ustar, mo_length, v_sigma, blh, z, zd, z0, 
+                     ws = NULL) {
   
   # Set model constants
   n_lim <- 5000 # Limit for neutral scaling
+  zm <- z - zd  # aerodynamic measurement height
+  L <- mo_length
   # Deviation of crosswind distance parameters (Eq. 19)
   ac <- 2.17
   bc <- 1.66
   cc <- 20.0
   
   # Crosswind integrated footprint
-  ci <- kljun_1d(x, ustar, mo_length, blh, zm, zd, zo)
+  ci <- kljun_1d(x, ustar, L, blh, zm, zd, z0, ws)
   
   # Fail gracefully under invalid conditions
   if (all(is.na(ci$f))) {
@@ -60,16 +79,16 @@ kljun_2d <- function(x, y, ustar, mo_length, v_sigma, blh, zm, zd, zo) {
   }
   
   # Parameterized deviation of crosswind distance sigma_y* (Eq. 18)
-  sigystar <- ac * (bc * ci$xstar^2 / (1 + cc * ci$xstar))^0.5
+  sigystar <- ac * (bc * ci$xstar^2 / (1 + cc * ci$xstar))^(1/2)
   
   # Deviation of crosswind distance sigma_y (Eq. 13)
-  if (abs(mo_length) > n_lim) mo_length <- -1000000
-  p <- if (mo_length <= 0) 0.8 else 0.55
+  if (abs(L) > n_lim) L <- -1000000
+  p <- if (L <= 0) 0.8 else 0.55
   
-  ps1 <- 1e-5 * abs(ci$z / mo_length)^(-1) + p
+  ps1 <- 1e-5 * abs(zm/L)^(-1) + p
   if (ps1 > 1) ps1 <- 1
   
-  sigy <- sigystar / ps1 * ci$z * v_sigma / ustar
+  sigy <- sigystar/ps1 * zm * v_sigma/ustar
   
   # 6. Crosswind dispersion (Eq. 10)
   dy <- 1 / (sqrt(2 * pi) * sigy) * exp(-y^2 / (2 * sigy^2))
@@ -80,52 +99,50 @@ kljun_2d <- function(x, y, ustar, mo_length, v_sigma, blh, zm, zd, zo) {
 
 
 ## =============================================================================
-kormann_1d <- function(x, ws, ustar, mo_length, zm, zd) {
+kormann_1d_num <- function(x, ws, ustar, mo_length, z, zd) {
   
   # Set model constants
-  z <- zm - zd  # aerodynamic measurement height
+  zm <- z - zd  # aerodynamic measurement height
   k <- 0.4  # Von Karman constant
-  zl <- z / mo_length
+  L <- mo_length
   
-  # Dimensionless gradient functions of wind and temp profiles (Dyer 1974)
-  # Non-dimensional wind shear (Eq. 33)
-  phim <- if (mo_length > 0) { 
-    1 + 5 * zl
-  } else if (mo_length < 0) {
-    (1 - 16 * zl)^(-1 / 4)
-  }
+  # Roughness length from rearranging Eq. 31
+  z0 <- z / exp(ws / ustar * k + f_psi_m(z, L))
   
-  # Heat (Eq. 34)
-  phic <- if (mo_length > 0) { 
-    1 + 5 * zl
-  } else if (mo_length < 0) {
-    (1 - 16 * zl)^(-1 / 2)
-  }
+  # Integration bounds for Eqs. 42-46
+  z1 <- 3 * z0
+  z2 <- (1 + k) * zm
   
-  # Eddy diffusivity (Eq. 32)
-  K <- (k * ustar * z) / phic
+  #browser()
+  # Find power law exponent roots
+  m_root <- stats::uniroot(
+    f_m, c(0, 3), z0 = z0, zm = zm, L = L, z1 = z1, z2 = z2, extendInt = "upX", 
+    maxiter = 1000
+  )
+  m <- m_root$root
+  n_root <- stats::uniroot(
+    f_n, c(0, 3), z0 = z0, zm = zm, L = L, z1 = z1, z2 = z2, extendInt = "upX",
+    maxiter = 1000
+  )
+  n <- n_root$root
   
-  # Power law exponents (Eqs. 36)
-  m <- (ustar / k) * (phim / ws) # wind velocity
-  n <- if (mo_length > 0) { # eddy diffusivity
-    1 / (1 + 5 * zl)
-  } else if (mo_length < 0) {
-    (1 - 24 * zl) / (1 - 16 * zl)
-  } 
-  
-  # Constants in power-law profiles (Eqs. 11)
-  U <- ws / z^m # wind velocity
-  kappa <- K / z^n # eddy diffusivity
+  # Constants in power-law profiles (Eqs. 41)
+  # Wind velocity
+  U <- ustar/k * (I2(m, z0/zm, z1, z2, zm) + J1(m, z1, z2, zm, L, f_psi_m)) / 
+    (I1(2 * m, z1, z2, zm) * zm^m)
+  # Eddy diffusivity
+  kappa <- k * ustar * J1(n, z1, z2, zm, L, f_z_phi_c) / 
+    (I1(2 * n, z1, z2, zm) * zm^(n - 1))
   
   # Intermediate parameters
   r <- 2 + m - n # shape factor
   mu <- (1 + m) / r # constant
   
   # Flux length scale (Eq. 19)
-  xi <- (U * z^r) / (r^2 * kappa)
+  xi <- U * zm^r / (r^2 * kappa)
   
   # Crosswind integrated flux (Eq. 21)
-  f <- (1 / gamma(mu)) * (xi^mu / x^(1 + mu)) * exp(-xi / x)
+  f <- 1/gamma(mu) * xi^mu/x^(1 + mu) * exp(-xi/x)
   
   # Return list including intermediates
   list(m = m, U = U, kappa = kappa, r = r, mu = mu, f = f)
@@ -133,20 +150,83 @@ kormann_1d <- function(x, ws, ustar, mo_length, zm, zd) {
 
 
 ## =============================================================================
-kormann_2d <- function(x, y, ws, ustar, mo_length, v_sigma, zm, zd) {
+kormann_1d <- function(x, ws, ustar, mo_length, z, zd) {
+  
+  # Set model constants
+  zm <- z - zd  # aerodynamic measurement height
+  k <- 0.4  # Von Karman constant
+  L <- mo_length
+  
+  # Dimensionless gradient functions of wind and temp profiles (Dyer 1974)
+  # Non-dimensional wind shear (Eq. 33)
+  phim <- if (L > 0) { 
+    1 + 5 * zm/L
+  } else if (L < 0) {
+    (1 - 16 * zm/L)^(-1/4)
+  }
+  
+  # Heat (Eq. 34)
+  phic <- f_phi_c(zm, L)
+  
+  # Eddy diffusivity (Eq. 32)
+  K <- (k * ustar * zm) / phic
+  
+  # Power law exponents (Eqs. 36)
+  m <- (ustar/k) * (phim/ws) # wind velocity
+  n <- if (L > 0) { # eddy diffusivity
+    1 / (1 + 5 * zm/L)
+  } else if (L < 0) {
+    (1 - 24 * zm/L) / (1 - 16 * zm/L)
+  } 
+  
+  # Constants in power-law profiles (Eqs. 11)
+  U <- ws / zm^m # wind velocity
+  kappa <- K / zm^n # eddy diffusivity
+  
+  # Intermediate parameters
+  r <- 2 + m - n # shape factor
+  mu <- (1 + m) / r # constant
+  
+  # Flux length scale (Eq. 19)
+  xi <- (U * zm^r) / (r^2 * kappa)
+  
+  # Crosswind integrated flux (Eq. 21)
+  f <- (1/gamma(mu)) * (xi^mu / x^(1 + mu)) * exp(-xi/x)
+  
+  # Return list including intermediates
+  list(m = m, U = U, kappa = kappa, r = r, mu = mu, f = f)
+}
+
+
+## =============================================================================
+kormann_2d <- function(x, y, ws, ustar, mo_length, v_sigma, z, zd, 
+                       approach = c("analytical", "numerical")) {
+  
+  approach <- rlang::arg_match(approach)
+  ci_fun <- if (approach == "numerical") kormann_1d_num else kormann_1d
+  L <- mo_length
   
   # Crosswind integrated flux
-  ci <- kormann_1d(x, ws, ustar, mo_length, zm, zd)
+  #ci <- kormann_1d(x, ws, ustar, mo_length, z, zd)
+  ci <- rlang::exec(
+    ci_fun, x = x, ws = ws, ustar = ustar, mo_length = L, z = z, zd = zd
+  )
+  m <- ci$m
+  U <- ci$U
+  kappa <- ci$kappa
+  r <- ci$r
+  mu <- ci$mu
+  f <- ci$f
   
   # Effective plume velocity (Eq. 18)
-  ubar <- (gamma(ci$mu) / gamma(1 / ci$r)) * (ci$r^2 * ci$kappa / ci$U)^(ci$m / ci$r) * ci$U * x^(ci$m / ci$r)
+  ubar <- gamma(mu) / gamma(1/r) * (r^2 * kappa/U)^(m/r) * U * x^(m/r)
   
   # Crosswind distribution function (Eq. 9)
-  sigmay <- v_sigma * x / ubar
-  Dy <- (1 / (sqrt(2 * pi) * sigmay)) * exp(-y^2 / (2 * sigmay^2))
+  sigmay <- v_sigma * x/ubar
+  Dy <- 1/(sqrt(2 * pi) * sigmay) * exp(-y^2 / (2 * sigmay^2))
   
   # Crosswind distributed flux (Eq. 1)
-  ci$f * Dy
+  f * Dy
 }
 
 
@@ -397,7 +477,7 @@ kormann_ftp_dist <- function(ws, ustar, mo_length, zm, zd, p) {
       fx <- rep(NA, length(p))
       x <- 1
       while (x < 10000) {
-        fp <- try(integrate(f, 0, x)$value, silent = TRUE)
+        fp <- try(stats::integrate(f, 0, x)$value, silent = TRUE)
         if (class(fp) == "try-error") {
           # Certain (uncommon) meteorological conditions result in a non-finite
           # integral of the footprint function: set these records to NA
@@ -430,3 +510,86 @@ lateral_diffusion <- function(y, sigma_y) {
   1 / (sqrt(2 * pi) * sigma_y) * exp(-y^2 / (2 * sigma_y^2))
 }
 
+
+# Kormann functions
+# Heat (Eq. 34)
+f_phi_c <- function(zm, L, ...) {
+  if (L > 0) { 
+    phi_c <- 1 + 5 * zm/L
+  } else if (L < 0) {
+    phi_c <- (1 - 16 * zm/L)^(-1/2)
+  }
+  phi_c
+}
+# Diabatic integration of the wind profile (Eq. 35)
+f_psi_m <- function(zm, L, ...) {
+  zeta <- (1 - 16 * zm/L)^(1/4)
+  if (L > 0) { 
+    psi_m <- 5 * zm/L
+  } else if (L < 0) {
+    psi_m <- -2 * log((1 + zeta) / 2) - log((1 + zeta^2) / 2) + 
+      2 * atan(zeta) - pi/2
+  }
+  psi_m
+}
+# Helper for Eqs. 40 & 41
+f_z_phi_c <- function(zeta, zm, L) {
+  zeta / f_phi_c(zeta, L) * zm
+}
+# Power law exponent - wind velocity (Eq. 39)
+f_m <- function(m, z0, zm, L, z1, z2) {
+  a <- I1(2 * m, z1, z2, zm) * 
+    (I3(m, z0/zm, z1, z2, zm) + J2(m, z1, z2, zm, L, f_psi_m))
+  b <- I2(2 * m, 1, z1, z2, zm) * 
+    (I2(m, z0/zm, z1, z2, zm) + J1(m, z1, z2, zm, L, f_psi_m))
+  b - a
+}
+# Power law exponent - eddy diffusivity (Eq. 40)
+f_n <- function(n, z0, zm, L, z1, z2) {
+  a <- I1(2 * n, z1, z2, zm) * J2(n, z1, z2, zm, L, f_z_phi_c)
+  b <- I2(2 * n, 1, z1, z2, zm) * J1(n, z1, z2, zm, L, f_z_phi_c)
+  b - a
+}
+
+# Kormann integration functions (Eqs. 42-46)
+I1 <- function(p, z1, z2, zm) {
+  f <- function(zeta, p) zeta^p
+  i <- stats::integrate(
+    f = f, lower = z1/zm, upper = z2/zm, p = p, subdivisions = 1000
+  )
+  i$value
+}
+I2 <- function(p, zeta0, z1, z2, zm) {
+  f <- function(zeta, p, zeta0) zeta^p * log(zeta/zeta0)
+  i <- stats::integrate(
+    f = f, lower = z1/zm, upper = z2/zm, p = p, zeta0 = zeta0,
+    subdivisions = 1000
+  )
+  i$value
+}
+I3 <- function(p, zeta0, z1, z2, zm) {
+  f <- function(zeta, p, zeta0) zeta^p * log(zeta) * log(zeta/zeta0)
+  i <- stats::integrate(
+    f = f, lower = z1/zm, upper = z2/zm, p = p, zeta0 = zeta0,
+    subdivisions = 1000
+  )
+  i$value
+}
+J1 <- function(p, z1, z2, zm, L, .f) {
+  f <- function(zeta, p, zm, L, .f) zeta^p * rlang::exec(.f, zeta * zm, zm, L)
+  i <- stats::integrate(
+    f = f, lower = z1/zm, upper = z2/zm, p = p, zm = zm, L = L, .f = .f,
+    subdivisions = 1000
+  )
+  i$value
+}
+J2 <- function(p, z1, z2, zm, L, .f) {
+  f <- function(zeta, p, zm, L, .f) {
+    zeta^p * rlang::exec(.f, zeta * zm, zm, L) * log(zeta)
+  }
+  i <- stats::integrate(
+    f = f, lower = z1/zm, upper = z2/zm, p = p, zm = zm, L = L, .f = .f,
+    subdivisions = 1000
+  )
+  i$value
+}
