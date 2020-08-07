@@ -7,7 +7,8 @@
 
 <!-- badges: end -->
 
-The goal of footprints is to …
+footprints provides access to practical implementation of flux footprint
+modeling.
 
 ## Installation
 
@@ -19,17 +20,13 @@ You can install the development version of footprints from
 # devtools::install_github("grahamstewart12/footprints")
 ```
 
-What is special about using `README.Rmd` instead of just `README.md`?
-You can include R chunks like so:
+## Features
 
-``` r
-# summary(cars)
-```
-
-You’ll still need to render `README.Rmd` regularly, to keep `README.md`
-up-to-date.
-
-You can also embed plots, for example:
-
-In that case, don’t forget to commit and push the resulting figure
-files, so they display on GitHub\!
+  - Three models: Hsieh et al. 2000, Kormann & Meixner 2001, Kljun et
+    al. 2015
+  - 1-D and 2-D versions of each model
+  - Simple interface for running models on large amounts of data
+  - Tools to support footprint cover analysis
+  - Spatial referencing
+  - Footprint visualization
+  - General tools for matrix manipulation
