@@ -67,6 +67,56 @@ plot_tidy_matrix <- function(x, trans = NA) {
 }
 
 
+plot_stars <- function(data, band, ..., rgb = FALSE) {
+  
+  band <- rlang::enquo(band)
+  
+  if (rgb) {
+    ggplot2::ggplot() + 
+      geom_stars_rgb(data = data, ...) +
+      ggplot2::scale_fill_identity() +
+      ggplot2::coord_equal() +
+      ggplot2::theme_void()
+  } else {
+    if (!rlang::quo_is_missing(band)) data <- dplyr::select(data, !!band)
+    
+    ptype <- data %>% 
+      dplyr::pull(1) %>% 
+      vctrs::vec_ptype()
+    
+    plot <- ggplot2::ggplot() + 
+      stars::geom_stars(data = data) +
+      ggplot2::coord_equal() +
+      ggplot2::theme_void()
+    
+    if (is.factor(ptype)) {
+      plot + ggplot2::scale_fill_viridis_d(option = "A")
+    } else {
+      plot + ggplot2::scale_fill_viridis_c(option = "A")
+    }
+  }
+}
+
+geom_stars_rgb <- function(data, r = 1, g = 2, b = 3, max_value = 255, ...) {
+  
+  if (length(stars::st_dimensions(data)) > 2) {
+    crs <- sf::st_crs(data)
+    data <- data %>% 
+      tibble::as_tibble(center = FALSE) %>% 
+      tidyr::pivot_wider(names_from = 3, values_from = 4) %>%
+      stars::st_as_stars() %>%
+      sf::st_set_crs(crs)
+  }
+  
+  data <- data %>%
+    dplyr::select(
+      r = dplyr::all_of(r), g = dplyr::all_of(g), b = dplyr::all_of(b)
+    ) %>%
+    dplyr::mutate(rgb = grDevices::rgb(r, g, b, maxColorValue = max_value))
+  stars::geom_stars(data = data, ggplot2::aes(x = x, y = y, fill = rgb), ...)
+}
+
+
 plot_windrose <- function(data, ws = ws, wd = wd, ws_res = 0.5, wd_res = 30,
                           ws_min = 0, ws_max = 4, ws_seq = NULL,
                           palette = "Spectral", labels = c("range", "center"), 
