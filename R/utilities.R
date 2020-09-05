@@ -1,13 +1,69 @@
 
-# Performs vector operations on matrices while retaining matrix dimensions
-with_matrix <- function(x, .f) {
+# devtools::load_all("/Users/Graham/R Projects/footprints")
+
+
+atmospheric_stability <- function(mo_length, z, zd, zo, neutral_thr = 0.04) {
+  zm <- z - zd
+  if (!missing(zo)) {
+    zu <- zm * (log(zm / zo) - 1 + (zo / zm))
+    zl <- zu / mo_length
+  } else {
+    zl <- zm / mo_length
+  }
+  dplyr::case_when(
+    abs(zl) < neutral_thr ~ "neutral",
+    zl < 0 ~ "unstable",
+    zl > 0 ~ "stable"
+  )
+}
+
+
+#' Coerce a gridded object to a matrix
+#'
+#' @param x A gridded object. Currently methods exist for classes data.frame,
+#'   Raster, and stars.
+#' @param ... Additional arguments to pass to coercion function.
+#'
+#' @return A matrix.
+#' 
+#' @importFrom methods "as"
+#' 
+#' @export
+as_matrix <- function(x, ...) {
   
-  dims <- dim(x)
+  if (inherits(x, "data.frame")) {
+    return(as.matrix(x, ...))
+  }
+  
+  if (inherits(x, "stars")) {
+    x <- as(x, "Raster")
+  }
+  
+  raster::as.matrix(x, ...)
+}
+
+
+# Performs vector operations on matrices while retaining matrix dimensions
+with_matrix <- function(.x, .f, ..., .dims = dim(.x)) {
+  
   mat_fun <- rlang::as_function(.f)
   
-  vec <- mat_fun(as.vector(x))
+  vec <- mat_fun(as.vector(.x), ...)
   
-  matrix(vec, nrow = dims[1], ncol = dims[2])
+  matrix(vec, nrow = .dims[1], ncol = .dims[2])
+}
+
+with_matrix2 <- function(.x, .y, .f, ..., .dims = dim(.x)) {
+  
+  # if (!isTRUE(all.equal(.dims, dim(.y)))) {
+  #   stop("Dimensions of .x and .y must be equal.", call. = FALSE)
+  # }
+  
+  mat_fun <- rlang::as_function(.f)
+  
+  vec <- mat_fun(as.vector(.x), as.vector(.y), ...)
+  
+  matrix(vec, nrow = .dims[1], ncol = .dims[2])
 }
 
 
@@ -20,7 +76,6 @@ with_matrix <- function(x, .f) {
 #'   footprint probabilities. Defaults to one (i.e. a 1-m resolution).
 #'
 #' @export
-#'
 grid_init <- function(extent, fetch, res = 1) {
   
   dx <- res
@@ -57,17 +112,40 @@ grid_init <- function(extent, fetch, res = 1) {
 }
 
 
-snap_to_grid <- function(x, grid, coords, resample_method = "ngb") {
+#' Resample a raster to a standard matrix grid 
+#'
+#' @param x A Raster object to be resampled.
+#' @param grid A list of matrices as returned by [grid_init()].
+#' @param coords A numeric vector of length two indicating the spatial 
+#'   coordinates of the "center" grid cell.
+#' @param method Name of the resampling method passed to raster::resample. Can
+#'   be "ngb" (the default) or "bilinear".
+#'
+#' @return A matrix that matches spatial dimensions of grid.
+#' 
+#' @importFrom sf "st_bbox"
+#' 
+#' @export
+snap_to_grid <- function(x, grid, coords, method = "ngb") {
   
-  template <- grid_template_rst(grid, coords)
+  temp <- grid_template_rst(grid, coords)
+  
+  # Return the original object if extent is the same as grid
+  # - tolerance is ~10 cm
+  equal_bbox <- all.equal(
+    as.numeric(sf::st_bbox(temp)), as.numeric(sf::st_bbox(x))
+  )
+  if (isTRUE(equal_bbox)) {
+    return(as_matrix(x))
+  }
   
   # Assign CRS from original object
-  raster::crs(template) <- raster::crs(x)
+  raster::crs(temp) <- raster::crs(x)
   
   # Resample according to grid parameters
-  resampled <- raster::resample(x, template, method = resample_method)
+  resampled <- raster::resample(x, temp, method = method)
   
-  out <- raster::as.matrix(resampled)
+  out <- as_matrix(resampled)
   
   # Mask AOI if exists in grid list (maybe not, easier if there are no NAs)
   if ("aoi" %in% names(grid)) {
@@ -81,31 +159,153 @@ snap_to_grid <- function(x, grid, coords, resample_method = "ngb") {
 }
 
 
-aoi_to_grid <- function(aoi, grid, coords) {
+aoi_to_grid <- function(aoi, coords, delta = 1, center = FALSE) {
   
-  # Add geographical coordinates to grid
-  grid$y <- grid$y + coords[1] # lat
-  grid$x <- grid$x + coords[2] # lon
+  # Ensure that grid template will cover entire AOI
+  # - square buffer of [length] around tower should contain AOI regardless of 
+  #   exact tower location
+  bbox <- sf::st_bbox(aoi)
+  length <- ceiling(max(bbox$xmax - bbox$xmin, bbox$ymax - bbox$ymin))
   
-  # Convert list of matrices to XYZ data frame
-  temp_df <- data.frame(
-    # Necessary order: lat (y), lon (x), values
-    y = as.vector(grid$y),
-    x = as.vector(grid$x)
+  # Construct oversized grid template
+  template <- buffer_grid(coords, length, delta = delta, center = center)
+  
+  # Crop to actual AOI extent
+  grid_crop <- template %>%
+    sf::st_set_crs(sf::st_crs(aoi)) %>%
+    sf::st_crop(bbox, as_points = FALSE) %>% 
+    tibble::as_tibble()
+  
+  # Set values as x coordinates (x grid)
+  grid_x <- grid_crop %>% 
+    dplyr::mutate(values = x - coords[1]) %>%
+    stars::st_as_stars() %>% 
+    as_matrix()
+  
+  # Set values as y coordinates (y grid)
+  grid_y <- grid_crop %>% 
+    dplyr::mutate(values = y - coords[2]) %>%
+    stars::st_as_stars() %>% 
+    as_matrix()
+  
+  # Return list of x and y grids
+  list(x = grid_x, y = grid_y)
+}
+
+
+aoi_to_mask <- function(aoi, coords, delta = 1, center = FALSE) {
+  
+  # Ensure that grid template will cover entire AOI
+  # - square buffer of [length] around tower should contain AOI regardless of 
+  #   exact tower location
+  bbox <- sf::st_bbox(aoi)
+  length <- ceiling(max(bbox$xmax - bbox$xmin, bbox$ymax - bbox$ymin))
+  
+  # Construct oversized grid template
+  template <- buffer_grid(coords, length, delta = delta, center = center)
+  
+  # Crop to actual AOI extent
+  grid_crop <- template %>%
+    sf::st_set_crs(sf::st_crs(aoi)) %>%
+    sf::st_crop(bbox, as_points = FALSE) %>% 
+    sf::st_crop(aoi)
+  
+  # Convert to matrix format
+  grid_mat <- as_matrix(grid_crop)
+  
+  outside <- which(is.na(grid_mat))
+  grid_mat[outside] <- 0
+  
+  grid_mat
+}
+
+
+cut_grid <- function(x, width, keep_partial = TRUE, coords = NULL) {
+  
+  # For creating labeled grid quadrants
+  
+  grid <- x
+  if (inherits(x, "sf")) {
+    if (is.null(coords)) {
+      stop("'coords' must be provided if x is a spatial object.")
+    }
+    grid <- aoi_to_grid(x, coords)
+  }
+  
+  #dim <- dim(grid[[1]])
+  center <- width / 2
+  
+  # if (!is.null(center)) {
+  #   length <- max(dim[1], dim[2]) %>% ceiling()
+  #   template <- buffer_grid(center, length = length)
+  # }
+  
+  parse_cut_label <- function(x, fun = mean) {
+    
+    num <- x %>% 
+      as.character() %>%
+      stringr::str_remove_all("\\[|\\]|\\(|\\)") %>% 
+      stringr::str_split(",") %>% 
+      purrr::map(as.numeric) 
+    
+    num %>% 
+      purrr::map(rlang::as_function(fun)) %>% 
+      purrr::simplify()
+  }
+  
+  row_bins <- grid %>%
+    purrr::pluck(2) %>% 
+    magrittr::extract(, 1) %>%
+    ggplot2::cut_width(width = width, center = center) %>%
+    parse_cut_label() %>%
+    dplyr::if_else(. < 0, abs(. - 1), .) %>% 
+    as.factor() %>% 
+    as.integer()
+  
+  col_bins <- grid %>%
+    purrr::pluck(1) %>% 
+    magrittr::extract(1, ) %>%
+    ggplot2::cut_width(width = width, center = center) %>%
+    parse_cut_label() %>%
+    dplyr::if_else(. < 0, abs(. - 1), .) %>% 
+    as.factor() %>% 
+    as.integer()
+  
+  # Determine bin order based on distance from center
+  bin_order <- expand.grid(row_bins, col_bins) %>% 
+    dplyr::distinct(Var1, Var2) %>% 
+    dplyr::mutate(
+      code = paste0(
+        stringr::str_pad(Var1, 2, pad = "0"), 
+        stringr::str_pad(Var2, 2, pad = "0")
+      ), 
+      dist = sqrt(Var1^2 + Var2^2)
+    ) %>% 
+    dplyr::arrange(dist) %>% 
+    dplyr::pull(code)
+  
+  #row_bins <- ggplot2::cut_width(grid[[2]][, 1], width = width, center = center)
+  #col_bins <- ggplot2::cut_width(grid[[1]][1, ], width = width, center = center)
+  
+  # row_bins <- ggplot2::cut_number(seq(1, dim[1]), n, labels = FALSE)
+  # col_bins <- ggplot2::cut_number(seq(1, dim[2]), n, labels = FALSE)
+  #browser()
+  grid_bins <- outer(
+    stringr::str_pad(row_bins, 2, pad = "0"), 
+    stringr::str_pad(col_bins, 2, pad = "0"), 
+    FUN = paste0
   )
-  temp_df$z <- 1L
+  grid_lab <-  with_matrix(
+    grid_bins, ~ as.integer(forcats::fct_relevel(factor(.x), bin_order))
+  )
   
-  # Get CRS from AOI
-  aoi_crs <- raster::crs(aoi)
+  if (!keep_partial) {
+    bin_cells <- table(grid_lab)
+    partial <- which(bin_cells < width^2)
+    grid_lab[grid_lab %in% partial] <- NA
+  }
   
-  # Rasterize
-  temp_rst <- raster::rasterFromXYZ(as.matrix(temp_df), crs = aoi_crs)
-  
-  # Mask AOI
-  aoi_mask <- raster::mask(temp_rst, aoi, updatevalue = 0L)
-  
-  # Return matrix
-  raster::as.matrix(aoi_mask)
+  grid_lab
 }
 
 
@@ -126,17 +326,13 @@ trim_matrix <- function(x, extent = get_trim_extent(x)) {
 }
 
 
-plot_matrix <- function(x) {
-  
-  if (storage.mode(x) == "character") {
-    x <- with_matrix(x, ~ unclass(as.factor(.x)))
-  } 
-  
-  raster::plot(raster::raster(x))
-}
-
-
+#' Pivot matrix data from wide to long
+#' 
+#' @param x A matrix
+#'
 #' @importFrom tidyr "pivot_longer" tibble "as_tibble"
+#' 
+#' @export
 pivot_matrix <- function(x) {
   
   if (storage.mode(x) == "character") {
@@ -153,37 +349,30 @@ pivot_matrix <- function(x) {
 }
 
 
-plot_tidy_matrix <- function(x, trans = NA) {
-  
-  # trans = "sqrt" best for individual footprints
-  # trans = "log" best for footprint topology
-  if (is.na(trans)) trans <- "identity"
-  
-  data <- pivot_matrix(x)
-  
-  data %>%
-    ggplot2::ggplot(ggplot2::aes(x = x, y = y, fill = z)) +
-    ggplot2::geom_tile() +
-    ggplot2::scale_fill_distiller(palette = "Spectral", trans = trans) +
-    ggplot2::labs(x = NULL, y = NULL, fill = NULL) +
-    ggplot2::coord_fixed() +
-    ggplot2::theme_void()
-}
-
-
+#' Write a matrix to a delimited file
+#' 
+#' @param x A matrix object.
+#' @param path A path to write to.
+#' @param trunc Number of decimal places used to integerize data contents. If
+#'   set to 0 (the default), no changes are made. A common value is 9.
+#' @param compress Use gzip compression? Must be either TRUE or FALSE. If TRUE 
+#'   (recommended), a ".gz" extension will be added to the end of file.
+#'
 #' @importFrom readr "write_delim"
 #' @importFrom tibble "as_tibble"
-write_matrix <- function(x, file, trunc = 9, compress = TRUE) {
+#' 
+#' @export
+write_matrix <- function(x, path, trunc = 0, compress = TRUE) {
   
   # Convert data type to integer for more efficient storage
   # - this means weights below (1 / 'trunc') are effectively zero
-  if (!is.na(trunc)) {
+  if (trunc > 0) {
     x <- trunc(x * 10^trunc)
     storage.mode(x) <- "integer"
   }
   
   # Set path
-  file_path <- paste0(file, ".txt")
+  file_path <- paste0(path, ".txt")
   if (compress) file_path <- paste0(file_path, ".gz")
   
   # Convert to tbl for writing
@@ -194,14 +383,20 @@ write_matrix <- function(x, file, trunc = 9, compress = TRUE) {
 }
 
 
+#' Read whitespace-separated columns into a matrix
+#' 
+#' @param file A path to a file.
+#' @param trunc Number of decimal places used to integerize data contents. If
+#'   contents were not truncated, set to 0 (the default). A common value is 9.
+#'
 #' @importFrom readr "read_table2" "cols" "col_integer" "col_double"
-read_matrix <- function(file, trunc = 9) {
+#' 
+#' @export
+read_matrix <- function(file, trunc = 0) {
   
-  if (!is.na(trunc)) {
-    scale <- 10^trunc
+  if (trunc > 0) {
     data_type <- readr::col_integer()
   } else {
-    scale <- 1
     data_type <- readr::col_double()
   }
   
@@ -209,18 +404,24 @@ read_matrix <- function(file, trunc = 9) {
     file, col_names = FALSE, col_types = readr::cols(.default = data_type),
     progress = FALSE
   )
-  #data <- read.table(file, sep = " ")
-  data_mat <- as.matrix(data)
+  # data <- vroom::vroom(
+  #   file, delim = " ", col_names = FALSE, 
+  #   col_types = readr::cols(.default = data_type), progress = FALSE
+  # )
+  
+  data_mat <- as_matrix(data)
   dimnames(data_mat) <- NULL
   
   # Scale based on how data was stored
-  data_mat <- data_mat / scale
+  data_mat <- data_mat / 10^trunc
   
   data_mat
 }
 
 
 #' Read grid coordinates from two .txt files
+#' 
+#' probably get rid of this - pretty unnecessary
 #' 
 #' @param path A character vector containing a single path
 #' @param names A character vector of length two, the file names of grid 
@@ -235,7 +436,7 @@ read_grid <- function(path, names = c("x", "y")) {
   grid_files <- file.path(path, file_names)
   
   grid_files %>% 
-    purrr::map(read_matrix, trunc = NA) %>%
+    purrr::map(read_matrix, trunc = 0) %>%
     rlang::set_names(names)
 }
 
@@ -277,16 +478,7 @@ fp_rasterize <- function(x, grid, coords, crs) {
 
 
 rotate_grid <- function(grid, dir) {
-  #browser()
-  # Calculate wind direction angle
-  #theta <- ((360 - dir) %% 360) * (pi / 180)
-  
-  #out <- grid
-  
-  # Rotate coordinates toward wind direction
-  #out$x <- grid$x * cos(theta) - grid$y * sin(theta)
-  #out$y <- grid$x * sin(theta) + grid$y * cos(theta)
-  
+
   out <- grid
   
   # Distance and direction of each grid cell
@@ -294,10 +486,35 @@ rotate_grid <- function(grid, dir) {
   fpa <- atan2(grid$x, grid$y) * 180 / pi - dir
   
   # Rotate original coordinates using grid vectors
-  out$x <- cos(fpa * pi / 180) * fpd
-  out$y <- -1 * sin(fpa * pi / 180) * fpd
+  out$x <- cos(fpa * pi/180) * fpd
+  out$y <- -1 * sin(fpa * pi/180) * fpd
   
   out
+}
+
+
+accumulate_weights <- function(x, max = 1, zero_as_max = FALSE) {
+  
+  source <- x
+  if (!zero_as_max) source <- with_matrix(x, ~ dplyr::na_if(.x, 0))
+  
+  # Sort matrix values from high to low
+  sorted <- with_matrix(
+    source, ~ vctrs::vec_sort(.x, direction = "desc", na_value = "smallest")
+  )
+  sort_order <- vctrs::vec_order(
+    as.vector(source), direction = "desc", na_value = "smallest"
+  )
+  
+  # Calculate cumulative sums of footprint weights
+  summed <- source
+  summed[sort_order] <- with_matrix(sorted, ~ cumsum(.x))
+  
+  accum_source <- with_matrix(summed, ~ tidyr::replace_na(.x, 0)) 
+  
+  accum_source[accum_source > max] <- 0
+  
+  accum_source
 }
 
 
@@ -321,26 +538,32 @@ rotate_grid <- function(grid, dir) {
 #' @export
 mask_source_area <- function(x, p = 0.85, mask_value = NA) {
   
-  # Check inputs
-  
   # Assume that p is given as a percentage if >1
   if (p > 1) p <- p / 100
   
   # Sort matrix values from high to low
-  rs <- sort(as.vector(x), decreasing = TRUE)
+  x_vec <- as.vector(x)
+  sorted <- vctrs::vec_sort(x_vec, direction = "desc", na_value = "smallest")
   
   # Calculate cumulative sums of footprint weights
-  cs <- cumsum(rs)
+  summed <- cumsum(sorted)
   
   # Get the minimum value of cumulative sum less than p
-  rp <- min(rs[cs < p])
+  source_area <- sorted[summed < p]
+  
+  # If cumulative footprint is never less than p, source is too close to tower
+  if (length(source_area) == 0) {
+    cutoff <- max(x)
+  } else {
+    cutoff <- min(source_area)
+  }
+  
   out <- x
   
   # Set all other cells to fill value
-  out[out < rp] <- mask_value
+  out[out < cutoff] <- mask_value
   
   out
-  
 }
 
 
