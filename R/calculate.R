@@ -1,5 +1,3 @@
-
-## =============================================================================
 #' Two-dimensional footprint calculation
 #'
 #' @param grid A list of matrices as returned by [grid_init()].
@@ -31,7 +29,7 @@
 #' Geoscientific Model Development, 8(11), 3695–3713. 
 #' https://doi.org/10.5194/gmd-8-3695-2015
 #' 
-#' @family footprints
+#' @family footprint
 #' @export
 calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh, 
                                  z, zd, z0, ws = NULL, ...) {
@@ -77,8 +75,6 @@ calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh,
   phi
 }
 
-
-## =============================================================================
 #' Two-dimensional footprint calculation
 #'
 #' @param grid A list of matrices as returned by [grid_init()].
@@ -105,7 +101,7 @@ calc_footprint_kljun <- function(grid, wd, ustar, mo_length, v_sigma, blh,
 #' flows. Advances in Water Resources, 23(7), 765–772. 
 #' https://doi.org/10.1016/S0309-1708(99)00042-1
 #' 
-#' @family footprints
+#' @family footprint
 #' @export
 calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma, 
                                  z, zd, z0, ...) {
@@ -142,8 +138,6 @@ calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma,
   phi
 }
 
-
-## =============================================================================
 #' Two-dimensional footprint calculation
 #'
 #' @param grid A list of matrices as returned by [grid_init()].
@@ -169,13 +163,13 @@ calc_footprint_hsieh <- function(grid, wd, ustar, mo_length, v_sigma,
 #' Non-Neutral Stratification. Boundary-Layer Meteorology, 99(2), 207–224. 
 #' <https://doi.org/10.1023/A:1018991015119>
 #' 
-#' @family footprints
+#' @family footprint
 #' @export
 calc_footprint_kormann <- function(grid, wd, ws, ustar, mo_length, v_sigma, z,
                                    zd, approach = c("analytical", "numerical"), 
                                    ...) {
   
-  approach <- rlang::arg_match(approach)
+  approach <- match.arg(approach)
   
   # Get grid dimensions
   dims <- dim(grid$x)
@@ -212,15 +206,35 @@ calc_footprint_kormann <- function(grid, wd, ws, ustar, mo_length, v_sigma, z,
   phi
 }
 
-
+#' One-dimensional fetch calculation
+#'
+#' @param pct Vector of percent contributions for which to calculate fetch 
+#'   distances. All values must be < 1.
+#' @param ustar A numeric vector, friction velocity in m+1s-1.
+#' @param mo_length A numeric vector, Monin-Obukhov length in m.
+#' @param blh A numeric vector, boundary layer height in m.
+#' @param z A numeric vector, measurement height in m.
+#' @param zd A numeric vector, zero-plane displacement height in m.
+#' @param z0 A numeric vector, aerodynamic roughness length in m.
+#' @param ws A numeric vector, wind speed in m+1s-1.
+#' @param max_x A numeric value of length 1, maximum distance to consider
+#' @param dx A numeric value of length 1, horizontal resolution
+#' @param include_offset Logical, should offset distance be included in output?
+#' @param include_peak Logical, should peak distance be included in output?
+#' @param ... To be left empty, for flexible calls to a footprint function.
+#'
+#' @return
+#' 
+#' @family fetch
+#' @export
 calc_fetch_kljun <- function(pct, ustar, mo_length, blh, z, zd, z0, ws = NULL, 
-                             max_x = 1000, dx = 1, offset = 0.01, peak = TRUE, 
-                             ...) {
+                             max_x = 1000, dx = 1, include_offset = TRUE, 
+                             include_peak = TRUE, ...) {
   
   if (any(pct >= 1)) {
-    stop("All 'pct' values must be < 1.0.", call. = FALSE)
+    stop("All 'pct' values must be < 1.", call. = FALSE)
   }
-  #browser()
+  
   x <- seq(dx, max_x, by = dx)
   
   args <- list(
@@ -248,12 +262,12 @@ calc_fetch_kljun <- function(pct, ustar, mo_length, blh, z, zd, z0, ws = NULL,
   x_pct <- as.list(x_pct)
   names(x_pct) <- paste0("fetch_", pct * 100, "_k15")
   
-  if (!is.null(offset)) {
+  if (include_offset) {
     # Add offset distance (location of 1% contribution)
-    x_pct[["fetch_offset_k15"]] <- x[f_cume > offset][1]
+    x_pct[["fetch_offset_k15"]] <- x[f_cume > 0.01][1]
   }
   
-  if (peak) {
+  if (include_peak) {
     # Add peak distance
     x_pct[["fetch_peak_k15"]] <- ci$x_max
   }
@@ -261,243 +275,137 @@ calc_fetch_kljun <- function(pct, ustar, mo_length, blh, z, zd, z0, ws = NULL,
   x_pct
 }
 
-
-calc_fetch_kormann <- function(pct, ws, ustar, mo_length, zm, zd, ...) {
-  
-  # Calculate x if flux percents are given
-  where <- pct
-  pct <- na.omit(purrr::quietly(as.numeric)(pct)$result)
-  pct <- sort(pct)
-  
-  if (length(pct) > 0) {
-    # Define footprint model as a function of x (distance from tower)
-    f <- function(x) xi^mu * exp(-xi / x) / (x^(1 + mu) * gamma(mu))
-    p <- sort(p)
-    fx <- rep(NA, length(p))
-    x <- 1
-    while (x < 10000) {
-      fp <- try(integrate(f, 0, x)$value, silent = TRUE)
-      if (class(fp) == "try-error") {
-        # Certain (uncommon) meteorological conditions result in a non-finite
-        # integral of the footprint function: set these records to NA
-        fp <- NA
-        break
-      }
-      fx[which(((fp > (p / 100) & is.na(fx))) == TRUE)[1]] <- x
-      if (!anyNA(fx)) break # finished if all fetch lengths are found
-      x <- x + 1
-    }
-  }
-  if ("peak" %in% all_p) {
-    peak <- xi / (1 + mu)
-    fx <- c(fx, peak)
-  }
-}
-
-
-calc_fetch_hsieh <- function(pct = c("offset", "peak", 30, 50, 70, 80, 90), 
-                             mo_length, zm, zd, zo, ...) {
-  
-  # Fail gracefully if missing values
-  if (anyNA(c(mo_length, zm, zd, zo))) {
-    return(rep(NA, length(pct)))
-  } 
-  
-  # Prepare decimal percents at which distances should be found
-  pos <- pct
-  pct <- check_percents(pct)
-  if ("offset" %in% pos) pct <- c(0.01, pct)
-  
-  # Calculate x if flux percents are given
-  if (length(pct) > 0) {
-    
-    min_x <- (mu / 100) * zo
-    max_x <- mu * zm
-    x_bin <- (max_x - min_x) / 1000
-    
-    pct <- sort(pct)
-    fx <- rep(NA, length(pct))
-    
-    x <- min_x
-    
-    while (x < max_x) {
-      
-      fp <- hsieh_1d(x, mo_length, zm, zd, zo)$Fy
-      fx[which(((fp > pct & is.na(fx))) == TRUE)[1]] <- x
-      
-      if (!anyNA(fx)) break # finished if all fetch lengths are found
-      x <- x + x_bin
-    }
-  }
-  
-  # Calculate x if peak distance is requested
-  if ("peak" %in% pct) {
-    peak <- DP / (2 * k^2)
-    fx <- c(fx, peak)
-  }
-}
-
-
-fp_fetch <- function(data, ws = "ws", ustar = "ustar", zeta = "zeta",
-                     mo_length = "mo_length", z, zd, zo, percent,
-                     method = c("KM01", "H00", "K04")) {
-  
-  # Simplify variables names
-  x <- rep(NA, nrow(data))
-  p <- sort(percent)
-  method <- rlang::arg_match(method)
-  
-  if (method == "KM01") {
-    vars <- c(ws, ustar, zeta)
-    if (!all(vars %in% names(data))) {
-      stop("Missing ", paste0(
-        vars[!(vars %in% names(data))], collapse = ", "
-      ), ".", call. = FALSE)
-    }
-    out <- data[, 0]
-    names <- dplyr::if_else(
-      !suppressWarnings(is.na(as.numeric(p))),
-      paste0("x_", p, "perc"), paste0("x_", p)
-    )
-    out[, names] <- NA
-    for (i in seq_along(x)) {
-      # Set model inputs - Kormann & Meixner 2001
-      ws_ <- data[i, ws]
-      ustar_ <- data[i, ustar]
-      zeta_ <- data[i, zeta]
-      # Execute model function
-      out[i, ] <- kormann_ftp_dist(ws_, ustar_, zeta_, z, zd, p)
-    }
-  } else if (method == "H00") {
-    if (!mo_length %in% names(data)) stop("Missing mo_length.", call. = FALSE)
-    out <- data[, 0]
-    names <- dplyr::if_else(
-      !suppressWarnings(is.na(as.numeric(p))),
-      paste0("x_", p, "perc"), paste0("x_", p)
-    )
-    names <- c("xoffset", names)
-    out[, names] <- NA
-    for (i in seq_along(x)) {
-      # Set model inputs - Hsieh 2000
-      l_ <- data[i, mo_length]
-      # Execute model function
-      out[i, ] <- hsieh_ftp_dist(z, zd, zo, l_, p)
-    }
-  }
-  # Return vector if only one p was requested
-  if (ncol(out) < 2) out <- out[, 1]
-  out
-}
-
-
-#' Time-averaged footprint
-#'
-#' @param x A list of footprint matrices.
-#' @param grid A list of length two containing matrices of equal dimensions,
-#'   indicating x and y coordinates. Template returned by grid_init.
-#' @param weights A vector of same length as x
-#'
-#' @export
-calc_climatology <- function(x, grid, weights = NULL) {
-  
-  # Get grid dimensions
-  n <- dim(grid$x)[1]
-  len <- length(x)
-  
-  if (!is.null(weights)) {
-    avg_ftp <- list(
-      z = matrix(0, nrow = n, ncol = n),
-      fpw = matrix(0, nrow = n, ncol = n)
-    )
-  } else avg_ftp <- list(z = matrix(0, nrow = n, ncol = n))
-  
-  count <- 0
-  #pbar <- dplyr::progress_estimated(len)
-  
-  for (i in 1:len) {
-    
-    fp <- x[[i]]
-    
-    if (any(!is.na(fp$z))) {
-      if (!is.null(weights)) {
-        # If using weights, only include record if both fp and weight exist
-        if (!is.na(weights[i])) {
-          avg_ftp$z <- avg_ftp$z + fp$z
-          avg_ftp$fpw <- avg_ftp$fpw + fp$z * weights[i]
-          count <- count + 1
-        }
-      } else if (is.null(weights)) {
-        # Only need fp if not using weights
-        avg_ftp$z <- avg_ftp$z + fp$z
-        count <- count + 1
-      }
-    }
-    
-    #pbar$tick()$print()
-  }
-  
-  avg_ftp$z <- avg_ftp$z / count
-  
-  if (!is.null(weights)) {
-    # Similar weighting routine to Budishchev et al. (2014)
-    wsum <- sum(avg_ftp$fpw, na.rm = TRUE) # equals sum of weights
-    avg_ftp$z <- avg_ftp$fpw / wsum
-    #avg_ftp$fpw <- avg_ftp$fpw / count # this preserves the weights units
-  }
-  
-  avg_ftp$z
-}
-
-
-#' Footprint-weighted land cover
+#' One-dimensional fetch calculation
 #' 
-#' @param x A numeric matrix
-#' @param y A numeric matrix
-#' @param type The type of convolution to take place, either "factor" or 
-#'   "numeric"
-#' @param levels A vector
-#' @param ignore_levels A vector
+#' @param pct Vector of percent contributions for which to calculate fetch 
+#'   distances. All values must be < 1.
+#' @param ws A numeric vector, wind speed in m+1s-1.
+#' @param ustar A numeric vector, friction velocity in m+1s-1.
+#' @param mo_length A numeric vector, Monin-Obukhov length in m.
+#' @param z A numeric vector, measurement height in m.
+#' @param zd A numeric vector, zero-plane displacement height in m.
+#' @param z0 A numeric vector, aerodynamic roughness length in m.
+#' @param approach Either "analytical" (the default) or "numerical". Corresponds
+#'   to the two different approaches for relating the power law to Monin-Obukhov
+#'   similarity as described in Kormann & Meixner (2001). According to the 
+#'   authors, the analytical approach is more computationally efficient while
+#'   the numerical approach produces better results.
+#' @param max_x A numeric value of length 1, maximum distance to consider
+#' @param dx A numeric value of length 1, horizontal resolution
+#' @param include_offset Logical, should offset distance be included in output?
+#' @param include_peak Logical, should peak distance be included in output?
+#' @param ... To be left empty, for flexible calls to a footprint function.
 #'
-#' @importFrom stats "na.omit"
+#' @return
+#' 
+#' @family fetch
 #' @export
-summarize_cover <- function(x, y, type = c("factor", "numeric"), levels, 
-                            ignore_levels = 0) {
+calc_fetch_kormann <- function(pct, ws, ustar, mo_length, z, zd, z0,
+                               approach = c("analytical", "numerical"),
+                               max_x = 1000, dx = 1, include_offset = TRUE, 
+                               include_peak = TRUE, ...) {
   
-  type <- rlang::arg_match(type)
+  approach <- match.arg(approach)
   
-  if (type == "numeric") {
-    
-    # Convolve matrices, normalize by total footprint weight
-    #out <- sum((x / sum(x)) * y)
-    #out <- sum(x * y) / sum(x)
-    out <- sum(x * y)
-    
-    return(out)
+  if (any(pct >= 1)) {
+    stop("All 'pct' values must be < 1.", call. = FALSE)
   }
   
-  # Detect levels if necessary
-  if (missing(levels)) {
-    levels <- sort(na.omit(unique(as.vector(y))))
-    if (length(levels) > length(x) / 2) {
-      stop("Too many levels detected. Is type = 'numeric' more appropriate?")
-    }
-  } 
+  x <- seq(dx, max_x, by = dx)
   
-  # Ignore level(s) if indicated
-  levels <- levels[!levels %in% ignore_levels]
+  args <- list(
+    x = x, ws = ws, ustar = ustar, mo_length = mo_length,
+    z = z, zd = zd, z0 = z0
+  )
   
-  # Add names if not given
-  if (!rlang::is_named(levels)) levels <- rlang::set_names(levels)
+  # Calculate crosswind-integrated footprint along x values
+  ci_fun <- if (approach == "numerical") kormann_1d_num else kormann_1d
+  ci <- rlang::exec(ci_fun, !!!args)
   
-  n <- length(levels)
-  out <- rlang::set_names(rep(NA, n), names(levels))
+  # Calculate cumulative footprint weight (i.e. integrate the curve)
+  f_cume <- cumsum(ci$f) * dx
   
-  # Add up weights for each cover type
-  for (i in 1:n) {
-    cells <- which(y == levels[i])
-    if (length(cells) == 0) out[i] <- 0 else out[i] <- sum(x[cells])
+  #x_pct <- lapply(pct, function(.x) x[f_cume > .x][1])
+  #x_pct <- lapply(x_pct, function(.x) if (.x == 100) NA else .x)
+  
+  # Find first x value where f_cume is greater than pct (fetch distance)
+  x_pct <- purrr::map_dbl(pct, ~ x[f_cume > .x][1])
+  # Remove fetch distances at upper integration limit
+  x_pct[x_pct == max_x] <- NA
+  
+  x_pct <- as.list(x_pct)
+  names(x_pct) <- paste0("fetch_", pct * 100, "_km01")
+  
+  if (include_offset) {
+    # Add offset distance (location of 1% contribution)
+    x_pct[["fetch_offset_km01"]] <- x[f_cume > 0.01][1]
   }
   
-  # Return named vector equal in length to number of level
-  out
+  if (include_peak) {
+    # Add peak distance
+    x_pct[["fetch_peak_km01"]] <- ci$x_max
+  }
+  
+  x_pct
+}
+
+#' One-dimensional fetch calculation
+#' 
+#' @param pct Vector of percent contributions for which to calculate fetch 
+#'   distances. All values must be < 1.
+#' @param mo_length A numeric vector, Monin-Obukhov length in m.
+#' @param z A numeric vector, measurement height in m.
+#' @param zd A numeric vector, zero-plane displacement height in m.
+#' @param z0 A numeric vector, aerodynamic roughness length in m.
+#' @param max_x A numeric value of length 1, maximum distance to consider
+#' @param dx A numeric value of length 1, horizontal resolution
+#' @param include_offset Logical, should offset distance be included in output?
+#' @param include_peak Logical, should peak distance be included in output?
+#' @param ... To be left empty, for flexible calls to a footprint function.
+#'
+#' @return
+#' 
+#' @family fetch
+#' @export
+calc_fetch_hsieh <- function(pct, mo_length, z, zd, z0, max_x = 1000, dx = 1, 
+                             include_offset = TRUE, include_peak = TRUE, ...) {
+  
+  if (any(pct >= 1)) {
+    stop("All 'pct' values must be < 1.", call. = FALSE)
+  }
+  
+  x <- seq(dx, max_x, by = dx)
+  
+  args <- list(
+    x = x, mo_length = mo_length, z = z, zd = zd, z0 = z0
+  )
+  
+  # Calculate crosswind-integrated footprint along x values
+  ci <- rlang::exec(hsieh_1d, !!!args)
+  
+  # Calculate cumulative footprint weight (i.e. integrate the curve)
+  f_cume <- cumsum(ci$f) * dx
+  
+  #x_pct <- lapply(pct, function(.x) x[f_cume > .x][1])
+  #x_pct <- lapply(x_pct, function(.x) if (.x == 100) NA else .x)
+  
+  # Find first x value where f_cume is greater than pct (fetch distance)
+  x_pct <- purrr::map_dbl(pct, ~ x[f_cume > .x][1])
+  # Remove fetch distances at upper integration limit
+  x_pct[x_pct == max_x] <- NA
+  
+  x_pct <- as.list(x_pct)
+  names(x_pct) <- paste0("fetch_", pct * 100, "_h00")
+  
+  if (include_offset) {
+    # Add offset distance (location of 1% contribution)
+    x_pct[["fetch_offset_h00"]] <- x[f_cume > 0.01][1]
+  }
+  
+  if (include_peak) {
+    # Add peak distance
+    x_pct[["fetch_peak_h00"]] <- ci$x_max
+  }
+  
+  x_pct
 }
